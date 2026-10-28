@@ -1,12 +1,13 @@
 import { graphRequest, type Context } from './auth-commands.js';
-import { usage } from '../utils/errors.js';
-import { isGuid, resolvePlanId } from '../utils/name-resolution.js';
+import { CliError, usage } from '../utils/errors.js';
+import { isGuid, isPersonalPlan, personalPlanMember, resolvePlanId } from '../utils/name-resolution.js';
 
 interface Plan {
   id?: string;
   title?: string;
   name?: string;
   owner?: string;
+  container?: { url?: string };
 }
 
 interface Bucket {
@@ -62,7 +63,20 @@ export async function runReadCommand(ctx: Context, command: string, args: string
   else if (command === 'members') {
     const plan = await graphRequest(ctx, 'GET', `/planner/plans/${encodeURIComponent(selectedPlan!)}`) as Plan;
     if (!plan.owner) usage(`Could not find the owning group for Plan '${selectedPlan}'. Check the Plan id.`);
-    const result = await readCollection<Member>(ctx, `/groups/${encodeURIComponent(plan.owner)}/members`, args);
+    const owner = plan.owner;
+    const ownerOnly = async (): Promise<ReadCollection<Member>> => {
+      const member = await personalPlanMember(ctx, owner);
+      return { response: { value: [member] }, items: [member] };
+    };
+    let result: ReadCollection<Member>;
+    if (isPersonalPlan(plan)) result = await ownerOnly();
+    else {
+      try { result = await readCollection<Member>(ctx, `/groups/${encodeURIComponent(owner)}/members`, args); }
+      catch (error) {
+        if (!(error instanceof CliError && error.status === 404)) throw error;
+        result = await ownerOnly();
+      }
+    }
     response = result.response;
     rows = result.items;
     nextLink = result.nextLink;

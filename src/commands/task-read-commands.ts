@@ -1,6 +1,6 @@
 import { graphRequest, type Context } from './auth-commands.js';
 import { usage } from '../utils/errors.js';
-import { collection, isGuid, resolveBucketId, resolvePlanId } from '../utils/name-resolution.js';
+import { collection, isGuid, planMembers, resolveBucketId, resolvePlanId } from '../utils/name-resolution.js';
 
 interface Task {
   id?: string;
@@ -23,7 +23,7 @@ interface Collection<T> {
   [key: string]: unknown;
 }
 
-interface Plan { owner?: string }
+interface Plan { owner?: string; container?: { url?: string } }
 interface Bucket { id?: string; name?: string }
 interface Member { id?: string; displayName?: string; mail?: string; userPrincipalName?: string }
 
@@ -116,9 +116,7 @@ async function listTasks(ctx: Context, args: string[]): Promise<void> {
   }
   if (planId && fields.includes('assignees') && tasks.some((task) => Object.keys(task.assignments ?? {}).length)) {
     const plan = await graphRequest(ctx, 'GET', `/planner/plans/${encodeURIComponent(planId)}`) as Plan;
-    if (plan.owner) {
-      for (const member of await collection<Member>(ctx, `/groups/${encodeURIComponent(plan.owner)}/members`)) if (member.id) assigneeNames.set(member.id, member.displayName ?? member.mail ?? member.userPrincipalName ?? member.id);
-    }
+    for (const member of await planMembers(ctx, plan)) if (member.id) assigneeNames.set(member.id, member.displayName ?? member.mail ?? member.userPrincipalName ?? member.id);
   }
   const detailFields = args.includes('--details') ? ['description', 'checklist'] : [];
   const displayFields = [...fields, ...detailFields];
@@ -142,10 +140,8 @@ async function showTask(ctx: Context, args: string[]): Promise<void> {
   }
   if (planId && Object.keys(task.assignments ?? {}).length) {
     const plan = await graphRequest(ctx, 'GET', `/planner/plans/${encodeURIComponent(planId)}`) as Plan;
-    if (plan.owner) {
-      for (const member of await collection<Member>(ctx, `/groups/${encodeURIComponent(plan.owner)}/members`)) {
-        if (member.id) assigneeNames.set(member.id, member.displayName ?? member.mail ?? member.userPrincipalName ?? member.id);
-      }
+    for (const member of await planMembers(ctx, plan)) {
+      if (member.id) assigneeNames.set(member.id, member.displayName ?? member.mail ?? member.userPrincipalName ?? member.id);
     }
   }
   const lines = ['id', 'title', 'bucket', 'percent', 'priority', 'start', 'due', 'assignees', 'description', 'checklist']
