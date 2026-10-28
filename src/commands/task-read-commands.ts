@@ -129,7 +129,7 @@ async function showTask(ctx: Context, args: string[]): Promise<void> {
   else process.stdout.write(`${JSON.stringify(task, null, 2)}\n`);
 }
 
-function parseTaskId(value: string): string {
+export function parseTaskId(value: string): string {
   if (isGuid(value)) return value;
   let parsed: URL;
   try { parsed = new URL(value); } catch { usage(`Invalid Task id '${value}'. Pass a Task GUID or Planner Task URL.`); }

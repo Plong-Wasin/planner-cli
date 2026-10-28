@@ -6,6 +6,7 @@ import { runReadCommand } from './commands/read-commands.js';
 import { runTaskReadCommand } from './commands/task-read-commands.js';
 import { runApi } from './commands/api-commands.js';
 import { runAdd } from './commands/add-command.js';
+import { runBulkWrite } from './commands/bulk-write-commands.js';
 import { CliError, usage } from './utils/errors.js';
 
 const USAGE_ERROR = 2;
@@ -48,6 +49,7 @@ async function main(args: string[]): Promise<void> {
   if (command === 'config') return runConfig(ctx, [subcommand, ...commandArgs].filter((value): value is string => value !== undefined));
   if (command === 'api') return runApi(ctx, [subcommand, ...commandArgs].filter((value): value is string => value !== undefined));
   if (command === 'add') return runAdd(ctx, [subcommand, ...commandArgs].filter((value): value is string => value !== undefined));
+  if (command === 'update' || command === 'done' || command === 'delete') return runBulkWrite(ctx, command, [subcommand, ...commandArgs].filter((value): value is string => value !== undefined));
   if (command === 'me' || command === 'plans' || command === 'buckets' || command === 'members') return runReadCommand(ctx, command, [subcommand, ...commandArgs].filter((value): value is string => value !== undefined));
   if (command === 'tasks') return runTaskReadCommand(ctx, 'tasks', [subcommand, ...commandArgs].filter((value): value is string => value !== undefined));
   if (command === 'task') return runTaskReadCommand(ctx, 'task', [subcommand, ...commandArgs].filter((value): value is string => value !== undefined));

@@ -12,14 +12,15 @@ Commands:
   tasks      List Tasks
   task       Show one Task
   add        Create a Task
-  update     Update Tasks
+  update     Update Tasks (bucket, assign, priority, dates, Details, percent)
   done       Complete Tasks
-  delete     Delete Tasks
+  delete     Delete Tasks (requires --yes)
   api        Send a raw Microsoft Graph request
 
 Options:
   --plan <name|id> Select a Plan (overrides PLANNER_PLAN and Profile default)
   --bucket <name|id> Select the Bucket for a new Task
+  --percent <0-100> Set Task completion percentage with update
   --json           Print the raw Graph response
   --all            Follow pages up to the safety cap
   --cursor <token> Continue from a previous page
