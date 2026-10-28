@@ -1,0 +1,20 @@
+{
+  "name": "planner-cli",
+  "interface": {
+    "displayName": "Planner CLI"
+  },
+  "plugins": [
+    {
+      "name": "planner-cli",
+      "source": {
+        "source": "local",
+        "path": "./plugins/planner-cli"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

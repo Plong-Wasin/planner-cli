@@ -33,6 +33,12 @@ it('prints help, and reports an unknown command as a usage error', async () => {
   const help = await cli.run(['--help']);
   assert.equal(help.code, 0);
   assert.match(help.stdout, /Commands:/);
+  for (const command of ['auth', 'config', 'me', 'plans', 'buckets', 'members', 'tasks', 'task', 'add', 'update', 'done', 'delete', 'api']) {
+    assert.match(help.stdout, new RegExp(`\\b${command}\\b`));
+  }
+  for (const option of ['--profile', '--client-id', '--plan', '--bucket', '--assign', '--priority', '--due', '--start', '--description', '--checklist', '--data', '--no-assign', '--percent', '--yes', '--mine', '--open', '--created-after', '--completed-after', '--fields', '--details', '--cursor', '--all', '--json']) {
+    assert.match(help.stdout, new RegExp(option.replaceAll('-', '\\-')));
+  }
   assert.equal(help.stderr, '');
 
   const unknown = await cli.run(['not-a-planner-command']);

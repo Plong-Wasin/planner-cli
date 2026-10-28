@@ -17,17 +17,43 @@ Commands:
   delete     Delete Tasks (requires --yes)
   api        Send a raw Microsoft Graph request
 
-Options:
-  --plan <name|id> Select a Plan (overrides PLANNER_PLAN and Profile default)
-  --bucket <name|id> Select the Bucket for a new Task
-  --percent <0-100> Set Task completion percentage with update
+Global options:
+  -p, --profile <name> Select a Profile (or set PLANNER_PROFILE)
+  --client-id <id>    Override the OAuth client id (or set PLANNER_CLIENT_ID)
+  --plan <name|id>    Select a Plan (overrides PLANNER_PLAN and Profile default)
+
+Commands and options:
+  auth login | check | logout
+  config show | set plan|bucket <name|id>
+  me | plans [--json] [--all] [--cursor <token>]
+  buckets | members [--plan <name|id>] [--json] [--all] [--cursor <token>]
+  tasks [--plan <name|id>] [--bucket <name|id>] [--mine] [--open]
+        [--created-after <date>] [--completed-after <date>]
+        [--fields <id,title,bucket,percent,due,assignees>] [--details]
+        [--json] [--all] [--cursor <token>]
+  task <id|url> [--json]
+  add <title> [--bucket <name|id>] [--assign <me|email|name|id>] [--no-assign]
+      [--priority <urgent|important|medium|low|0-10>] [--due <date>] [--start <date>]
+      [--description <text|@file|->] [--checklist <text|@file|->] [--json]
+  add --data <@file|-> [--json]  Bulk create from NDJSON or a JSON array
+  update <id...> [--bucket <name|id>] [--assign <me|email|name|id>|--no-assign]
+         [--priority <urgent|important|medium|low|0-10>] [--due <date>] [--start <date>]
+         [--description <text|@file|->] [--checklist <text|@file|->]
+         [--percent <0-100>] [--json]
+  done <id...> [--json]
+  delete <id...> --yes [--json]
+  api <GET|POST|PUT|PATCH|DELETE> <path> [key=value...] [--data <JSON|@file|->] [--all]
+
+Common options:
   --json           Print the raw Graph response
   --all            Follow pages up to the safety cap
   --cursor <token> Continue from a previous page
-  tasks --fields <names> Select Task columns (id,title,bucket,percent,due,assignees)
-  tasks --details     Include Task description and checklist
   -h, --help     Show help
   -v, --version  Show version
+
+Environment:
+  PLANNER_PROFILE, PLANNER_TOKEN, PLANNER_CLIENT_ID, PLANNER_CONFIG, PLANNER_PLAN
+  PLANNER_GRAPH_URL and PLANNER_LOGIN_URL (for alternate services and tests)
 
 Exit codes:
   0  Success
