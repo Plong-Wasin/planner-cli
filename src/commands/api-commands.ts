@@ -10,10 +10,18 @@ export async function runApi(ctx: Context, args: string[]): Promise<void> {
   const query = new URLSearchParams();
   let body: string | undefined;
   let all = false;
+  const headers: Record<string, string> = {};
   for (let index = 2; index < args.length; index += 1) {
     const pair = args[index]!;
     if (pair === '--all') {
       all = true;
+      continue;
+    }
+    if (pair === '--header' || pair.startsWith('--header=')) {
+      const header = pair === '--header' ? args[++index] : pair.slice('--header='.length);
+      const colon = header?.indexOf(':') ?? -1;
+      if (!header || colon <= 0) usage("Option '--header' requires 'Name: value'.");
+      headers[header.slice(0, colon).trim()] = header.slice(colon + 1).trim();
       continue;
     }
     if (pair === '--data' || pair.startsWith('--data=')) {
@@ -33,7 +41,13 @@ export async function runApi(ctx: Context, args: string[]): Promise<void> {
     query.append(pair.slice(0, separator), pair.slice(separator + 1));
   }
   if (all && method !== 'GET') usage("Option '--all' is only supported with GET requests.");
-  let data = await graphRequest(ctx, method, path, { query, body });
+  const hasIfMatch = Object.keys(headers).some((name) => name.toLowerCase() === 'if-match');
+  if ((method === 'PATCH' || method === 'DELETE') && path.startsWith('/planner/') && !hasIfMatch) {
+    // Planner rejects writes without an If-Match etag, so fetch the current one.
+    const current = await graphRequest(ctx, 'GET', path) as { '@odata.etag'?: string } | undefined;
+    if (current?.['@odata.etag']) headers['If-Match'] = current['@odata.etag'];
+  }
+  let data = await graphRequest(ctx, method, path, { query, body, headers });
   if (all) data = await collectPages(ctx, path, query, data);
   if (data !== undefined) process.stdout.write(`${JSON.stringify(data)}\n`);
 }

@@ -42,7 +42,7 @@ Commands and options:
          [--percent <0-100>] [--json]
   done <id...> [--json]
   delete <id...> --yes [--json]
-  api <GET|POST|PUT|PATCH|DELETE> <path> [key=value...] [--data <JSON|@file|->] [--all]
+  api <GET|POST|PUT|PATCH|DELETE> <path> [key=value...] [--data <JSON|@file|->] [--header 'Name: value'] [--all]
 
 Common options:
   --json           Print the raw Graph response

@@ -53,6 +53,7 @@ interface AddOptions {
   start?: string;
   description?: string;
   checklist?: string;
+  literal?: boolean;
 }
 
 async function createTask(ctx: Context, title: string | undefined, options: AddOptions): Promise<void> {
@@ -84,8 +85,8 @@ async function createTask(ctx: Context, title: string | undefined, options: AddO
   const task = await graphRequest(ctx, 'POST', '/planner/tasks', { body: JSON.stringify(payload) }) as { id?: string };
   if (!task?.id) throw new CliError('Graph created the Task without returning its id.');
   const details: Record<string, unknown> = {};
-  if (options.description !== undefined) details.description = loadText(options.description, '--description');
-  if (options.checklist !== undefined) details.checklist = checklist(loadText(options.checklist, '--checklist'));
+  if (options.description !== undefined) details.description = options.literal ? options.description : loadText(options.description, '--description');
+  if (options.checklist !== undefined) details.checklist = checklist(options.literal ? options.checklist : loadText(options.checklist, '--checklist'));
   // Print the id first: the Task exists even if its Details write fails, and the caller needs the id to fix it.
   process.stdout.write(`${task.id}\n`);
   if (Object.keys(details).length) {
@@ -167,7 +168,7 @@ function bulkOptions(record: Record<string, unknown>): AddOptions {
   for (const key of Object.keys(record)) {
     if (!allowed.has(key)) usage(`Unknown Task field '${key}'.`);
   }
-  const options: AddOptions = {};
+  const options: AddOptions = { literal: true };
   for (const key of allowed) {
     const value = record[key];
     if (value === undefined) continue;

@@ -60,10 +60,10 @@ planner delete <task-id> --yes
 
 ## Raw Graph access
 
-Use `api` when no shortcut covers the requested Planner operation. It accepts `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`, Graph paths, `key=value` query pairs, and `--data <JSON|@file|->`. `--all` follows GET continuation pages. Treat non-GET methods as writes and use them only with an explicit user instruction.
+Use `api` when no shortcut covers the requested Planner operation. It accepts `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`, Graph paths, `key=value` query pairs, and `--data <JSON|@file|->`. `--header 'Name: value'` adds a header; `PATCH` and `DELETE` on `/planner/` paths fetch the current `If-Match` etag automatically. `--all` follows GET continuation pages. Treat non-GET methods as writes and use them only with an explicit user instruction.
 
 ```sh
-planner api GET /me/planner/tasks top=10
+planner api GET /me/planner/tasks '$top=10'
 planner api PATCH /planner/tasks/<task-id> --data '{"percentComplete":50}'
 ```
 

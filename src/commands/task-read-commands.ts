@@ -1,6 +1,6 @@
 import { graphRequest, type Context } from './auth-commands.js';
 import { usage } from '../utils/errors.js';
-import { isGuid, resolveBucketId, resolvePlanId } from '../utils/name-resolution.js';
+import { collection, isGuid, resolveBucketId, resolvePlanId } from '../utils/name-resolution.js';
 
 interface Task {
   id?: string;
@@ -67,30 +67,38 @@ async function listTasks(ctx: Context, args: string[]): Promise<void> {
   const cursor = option(args, '--cursor');
   let url = cursor ? decodeCursor(cursor, ctx) : `${basePath}?${query}`;
   const all = args.includes('--all');
-  const pages: Collection<Task>[] = [];
-  let nextLink: string | undefined;
-  for (let page = 0; page < (all ? PAGE_CAP : 1); page += 1) {
-    const result = await graphPage(ctx, url) as Collection<Task>;
-    pages.push(result);
-    nextLink = result['@odata.nextLink'];
-    if (!all || !nextLink) break;
-    validateContinuation(nextLink, ctx);
-    url = nextLink;
-  }
-  let tasks = pages.flatMap((page) => page.value ?? []);
+  const createdAfter = option(args, '--created-after');
+  const createdBound = createdAfter ? dateBound(createdAfter, '--created-after') : undefined;
+  const completedAfter = option(args, '--completed-after');
+  const completedBound = completedAfter ? dateBound(completedAfter, '--completed-after') : undefined;
+  let meId: string | undefined;
   if (args.includes('--mine')) {
     const me = await graphRequest(ctx, 'GET', '/me') as { id?: string };
     if (!me.id) usage('Could not identify the current user for --mine.');
-    tasks = tasks.filter((task) => Object.hasOwn(task.assignments ?? {}, me.id!));
+    meId = me.id;
   }
-  if (args.includes('--open')) tasks = tasks.filter((task) => (task.percentComplete ?? 0) < 100);
-  if (bucketId) tasks = tasks.filter((task) => task.bucketId === bucketId);
-  const createdAfter = option(args, '--created-after');
-  const createdBound = createdAfter ? dateBound(createdAfter, '--created-after') : undefined;
-  if (createdBound !== undefined) tasks = tasks.filter((task) => after(task.createdDateTime, createdBound));
-  const completedAfter = option(args, '--completed-after');
-  const completedBound = completedAfter ? dateBound(completedAfter, '--completed-after') : undefined;
-  if (completedBound !== undefined) tasks = tasks.filter((task) => after(task.completedDateTime, completedBound));
+  const keep = (task: Task): boolean => (meId === undefined || Object.hasOwn(task.assignments ?? {}, meId))
+    && (!args.includes('--open') || (task.percentComplete ?? 0) < 100)
+    && (!bucketId || task.bucketId === bucketId)
+    && (createdBound === undefined || after(task.createdDateTime, createdBound))
+    && (completedBound === undefined || after(task.completedDateTime, completedBound));
+  const filtered = meId !== undefined || args.includes('--open') || bucketId !== undefined
+    || createdBound !== undefined || completedBound !== undefined;
+
+  // Filters run client-side, so keep paging until a full page of matches (or the end) instead of filtering one page.
+  const pages: Collection<Task>[] = [];
+  const tasks: Task[] = [];
+  let nextLink: string | undefined;
+  for (let page = 0; page < (all || filtered ? PAGE_CAP : 1); page += 1) {
+    const result = await graphPage(ctx, url) as Collection<Task>;
+    pages.push(result);
+    tasks.push(...(result.value ?? []).filter(keep));
+    nextLink = result['@odata.nextLink'];
+    if (!nextLink || (!all && tasks.length >= DEFAULT_PAGE_SIZE)) break;
+    if (!all && !filtered) break;
+    validateContinuation(nextLink, ctx);
+    url = nextLink;
+  }
 
   const first = pages[0] ?? { value: [] };
   const response: Collection<Task> = all ? { ...first, value: tasks, ...(nextLink ? { '@odata.nextLink': nextLink } : {}) } : { ...first, value: tasks };
@@ -134,6 +142,14 @@ async function showTask(ctx: Context, args: string[]): Promise<void> {
   if (planId && task.bucketId) {
     const buckets = await graphRequest(ctx, 'GET', `/planner/plans/${encodeURIComponent(planId)}/buckets`) as Collection<Bucket>;
     for (const bucket of buckets.value ?? []) if (bucket.id) bucketNames.set(bucket.id, bucket.name ?? bucket.id);
+  }
+  if (planId && Object.keys(task.assignments ?? {}).length) {
+    const plan = await graphRequest(ctx, 'GET', `/planner/plans/${encodeURIComponent(planId)}`) as Plan;
+    if (plan.owner) {
+      for (const member of await collection<Member>(ctx, `/groups/${encodeURIComponent(plan.owner)}/members`)) {
+        if (member.id) assigneeNames.set(member.id, member.displayName ?? member.mail ?? member.userPrincipalName ?? member.id);
+      }
+    }
   }
   const lines = ['id', 'title', 'bucket', 'percent', 'priority', 'start', 'due', 'assignees', 'description', 'checklist']
     .map((field) => [field, formatField(task, field, bucketNames, assigneeNames, false)] as const)

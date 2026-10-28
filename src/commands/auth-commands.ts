@@ -83,7 +83,10 @@ export interface GraphRequestOptions {
   headers?: Record<string, string>;
 }
 
-async function graph(ctx: Context, method: string, path: string, options: GraphRequestOptions = {}, retried = false): Promise<unknown> {
+const MAX_THROTTLE_RETRIES = 2;
+const MAX_RETRY_WAIT_SECONDS = 30;
+
+async function graph(ctx: Context, method: string, path: string, options: GraphRequestOptions = {}, retried = false, throttled = 0): Promise<unknown> {
   const base = (ctx.env.PLANNER_GRAPH_URL || 'https://graph.microsoft.com/v1.0').replace(/\/$/, '');
   const url = new URL(options.rawUrl || `${base}${path.startsWith('/') ? path : `/${path}`}`);
   options.query?.forEach((value, key) => url.searchParams.append(key, value));
@@ -105,19 +108,36 @@ async function graph(ctx: Context, method: string, path: string, options: GraphR
   }
   if (response.status === 401 && !retried && !ctx.env.PLANNER_TOKEN && ctx.profile.refreshToken) {
     await refresh(ctx);
-    return graph(ctx, method, path, options, true);
+    return graph(ctx, method, path, options, true, throttled);
+  }
+  if ((response.status === 429 || response.status === 503) && throttled < MAX_THROTTLE_RETRIES) {
+    const wait = Number(response.headers.get('retry-after'));
+    const seconds = Number.isFinite(wait) && wait >= 0 ? Math.min(wait, MAX_RETRY_WAIT_SECONDS) : 1;
+    await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+    return graph(ctx, method, path, options, retried, throttled + 1);
   }
   if (!response.ok) {
+    const detail = await graphErrorDetail(response);
     const messages: Record<number, string> = {
       401: `Authentication failed for ${method} ${path}. Run 'planner auth login'.`,
       403: `Access denied for ${method} ${path}. Check that your account has the required Planner permissions.`,
       404: `Not found: ${method} ${path}. Check the id and path.`,
       429: `Rate limited for ${method} ${path}. Wait, then try again.`,
     };
-    throw new CliError(messages[response.status] || `HTTP ${response.status} for ${method} ${path}.`, 1, response.status);
+    throw new CliError(`${messages[response.status] || `HTTP ${response.status} for ${method} ${path}.`}${detail ? ` Graph said: ${detail}` : ''}`, 1, response.status);
   }
   const text = await response.text();
   return text ? JSON.parse(text) as unknown : undefined;
+}
+
+async function graphErrorDetail(response: Response): Promise<string> {
+  try {
+    const body = JSON.parse(await response.text()) as { error?: { code?: string; message?: string } | string };
+    if (typeof body.error === 'string') return body.error;
+    return [body.error?.code, body.error?.message].filter(Boolean).join(': ');
+  } catch {
+    return '';
+  }
 }
 
 export async function runAuth(ctx: Context, subcommand: string | undefined): Promise<void> {

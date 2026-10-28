@@ -41,7 +41,7 @@ function setConfig(config: unknown): void {
 function graphReply(status = 200): void {
   servers.graph.setReply((request, response) => {
     if (status !== 200) {
-      response.writeHead(status, { 'Content-Type': 'application/json', ...(status === 429 ? { 'Retry-After': '2' } : {}) });
+      response.writeHead(status, { 'Content-Type': 'application/json', ...(status === 429 ? { 'Retry-After': '0' } : {}) });
       response.end(JSON.stringify({ error: 'fake failure' }));
       return;
     }

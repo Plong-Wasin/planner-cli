@@ -46,11 +46,17 @@ export function isGuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
+// Planner Plan and Bucket ids are 28-character opaque strings.
+function looksLikePlannerId(value: string): boolean {
+  return /^[A-Za-z0-9_-]{28}$/.test(value);
+}
+
 export async function resolvePlanId(ctx: Context, value: string): Promise<string> {
   if (isGuid(value)) return value;
   const plans = await collection<Plan>(ctx, '/me/planner/plans');
   const matches = plans.filter((plan) => plan.id === value || equal(plan.title ?? plan.name, value));
   if (matches.length === 1 && matches[0]?.id) return matches[0].id;
+  if (!matches.length && looksLikePlannerId(value)) return value;
   const choices = (matches.length ? matches : plans).map((plan) => `${plan.title ?? plan.name ?? 'Untitled'} (${plan.id ?? 'unknown id'})`);
   fail('Plan', value, matches.length > 1, choices);
 }
@@ -61,6 +67,7 @@ export async function resolveBucketId(ctx: Context, plan: string, value: string)
   const buckets = await collection<Bucket>(ctx, `/planner/plans/${encodeURIComponent(planId)}/buckets`);
   const matches = buckets.filter((bucket) => bucket.id === value || equal(bucket.name, value));
   if (matches.length === 1 && matches[0]?.id) return matches[0].id;
+  if (!matches.length && looksLikePlannerId(value)) return value;
   fail('Bucket', value, matches.length > 1, (matches.length ? matches : buckets).map((bucket) => `${bucket.name ?? 'Untitled'} (${bucket.id ?? 'unknown id'})`));
 }
 
@@ -81,7 +88,7 @@ export async function resolveAssigneeId(ctx: Context, plan: string, value: strin
   fail('Assignee', value, matches.length > 1, (matches.length ? matches : members).map((member) => `${member.displayName ?? 'Unknown'} <${member.mail ?? member.userPrincipalName ?? 'no email'}> (${member.id ?? 'unknown id'})`));
 }
 
-function collection<T>(ctx: Context, path: string): Promise<T[]> {
+export function collection<T>(ctx: Context, path: string): Promise<T[]> {
   return cached(ctx, `collection:${path}`, () => loadCollection<T>(ctx, path));
 }
 

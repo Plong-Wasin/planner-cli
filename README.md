@@ -57,7 +57,7 @@ Run `planner --help` for the same command and option reference.
 | `planner update <id...>` | Update one or more Tasks. Supports `--bucket`, `--assign`, `--no-assign`, `--priority`, `--due`, `--start`, `--description`, `--checklist`, and `--percent`. |
 | `planner done <id...>` | Mark each Task complete. |
 | `planner delete <id...> --yes` | Delete Tasks. Requires the explicit `--yes` flag. |
-| `planner api <METHOD> <path>` | Send a raw Graph request with optional `key=value` query pairs, `--data <JSON\|@file\|->`, and GET-only `--all`. |
+| `planner api <METHOD> <path>` | Send a raw Graph request with optional `key=value` query pairs, `--data <JSON\|@file\|->`, `--header 'Name: value'` (PATCH/DELETE under `/planner/` fetch the etag automatically), and GET-only `--all`. |
 
 Names can be used for Plans, Buckets, and Assignees; ids and pasted Planner Task URLs are also accepted. Ambiguous or unknown names are rejected. Dates accept `YYYY-MM-DD` or a full ISO timestamp. `--description` and `--checklist` accept literal text, `@file`, or `-` for stdin; checklist text uses one item per line. `--json` prints the raw Graph response. Lists show a continuation cursor on stderr when another page is available; use `--cursor` to continue or `--all` to follow pages up to the safety cap.
 

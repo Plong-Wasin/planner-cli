@@ -130,3 +130,107 @@ it('bulk create resolves each Plan, Bucket and the current user once per run', a
   assert.equal(count(`/planner/plans/${planId}/buckets`), 1);
   assert.equal(count('/me'), 1);
 });
+
+it('raw api PATCH fetches the etag itself, and --header overrides it', async () => {
+  servers.graph.setReply((request, response) => {
+    if (request.method === 'GET') json(response, { '@odata.etag': 'auto-etag' });
+    else if (!request.headers['if-match']) json(response, { error: { message: 'missing If-Match' } }, 428);
+    else json(response, {});
+  });
+  servers.graph.reset();
+  const auto = await cli.run(['api', 'PATCH', `/planner/tasks/${taskId}`, '--data', '{"percentComplete":50}']);
+  assert.equal(auto.code, 0, auto.stderr);
+  assert.equal(servers.graph.requests.find(({ method }) => method === 'PATCH')?.headers['if-match'], 'auto-etag');
+
+  servers.graph.reset();
+  const manual = await cli.run(['api', 'PATCH', `/planner/tasks/${taskId}`, '--header', 'If-Match: W/"mine"', '--data', '{}']);
+  assert.equal(manual.code, 0, manual.stderr);
+  assert.deepEqual(servers.graph.requests.map(({ method }) => method), ['PATCH']);
+  assert.equal(servers.graph.requests[0]?.headers['if-match'], 'W/"mine"');
+});
+
+it('includes the Graph error message and retries a 429 after Retry-After', async () => {
+  servers.graph.setReply((_request, response) => json(response, { error: { code: 'BadRequest', message: 'planId is invalid' } }, 400));
+  servers.graph.reset();
+  const bad = await cli.run(['api', 'POST', '/planner/tasks', '--data', '{}']);
+  assert.equal(bad.code, 1);
+  assert.match(bad.stderr, /planId is invalid/);
+
+  let calls = 0;
+  servers.graph.setReply((_request, response) => {
+    calls += 1;
+    if (calls === 1) { response.writeHead(429, { 'Retry-After': '0', 'Content-Type': 'application/json' }); response.end('{}'); }
+    else json(response, { ok: true });
+  });
+  servers.graph.reset();
+  const throttled = await cli.run(['api', 'GET', '/me']);
+  assert.equal(throttled.code, 0, throttled.stderr);
+  assert.equal(servers.graph.requests.length, 2);
+});
+
+it('shows Assignee names for one Task', async () => {
+  servers.graph.setReply((request, response) => {
+    if (request.path.startsWith('/planner/tasks/')) json(response, { id: taskId, title: 'Owned', planId, assignments: { [userId]: {} } });
+    else if (request.path === `/planner/plans/${planId}`) json(response, { id: planId, owner: 'grp' });
+    else if (request.path.startsWith('/groups/grp/members')) json(response, { value: [{ id: userId, displayName: 'Alex Example' }] });
+    else json(response, { value: [] });
+  });
+  servers.graph.reset();
+  const result = await cli.run(['task', taskId]);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /^assignees: Alex Example$/m);
+});
+
+it('applies tasks filters across pages instead of only the first page', async () => {
+  servers.graph.setReply((request, response) => {
+    if (request.path === '/me/planner/plans') json(response, { value: [] });
+    else if (request.path.startsWith(`/planner/plans/${planId}/tasks?`)) {
+      json(response, { value: [{ id: 'done1', title: 'Finished', percentComplete: 100 }], '@odata.nextLink': `${servers.graph.url}/page2` });
+    } else if (request.path === '/page2') json(response, { value: [{ id: 'open1', title: 'Still open', percentComplete: 0 }] });
+    else json(response, { value: [] });
+  });
+  servers.graph.reset();
+  const result = await cli.run(['tasks', '--open']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /Still open/);
+  assert.doesNotMatch(result.stdout, /Finished/);
+});
+
+it('treats bulk create strings as literal text, never as @file or stdin', async () => {
+  servers.graph.setReply((request, response) => {
+    if (lookups(request, response)) return;
+    if (request.method === 'POST') json(response, { id: 'LiteralAAAAAAAAAAAAAAAAAAAA' });
+    else if (request.method === 'GET') json(response, { '@odata.etag': 'd1' });
+    else json(response, {});
+  });
+  servers.graph.reset();
+  const result = await cli.run(['add', '--data', '-'], {}, `${JSON.stringify({ title: 'At sign', description: '@alice please review' })}\n`);
+  assert.equal(result.code, 0, result.stderr);
+  const patch = servers.graph.requests.find(({ method, path }) => method === 'PATCH' && path.endsWith('/details'));
+  assert.equal(JSON.parse(patch?.body ?? '{}').description, '@alice please review');
+});
+
+it('uses a 28-character Plan id directly when it is not in the Plan list', async () => {
+  servers.graph.setReply((request, response) => {
+    if (request.path === '/me/planner/plans') json(response, { value: [] });
+    else json(response, { value: [] });
+  });
+  servers.graph.reset();
+  const result = await cli.run(['tasks']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(servers.graph.requests.some(({ path }) => path.startsWith(`/planner/plans/${planId}/tasks`)));
+});
+
+it('bulk update keeps going after a per-Task usage error', async () => {
+  const other = 'OtherTaskAAAAAAAAAAAAAAAAAAA';
+  servers.graph.setReply((request, response) => {
+    if (lookups(request, response)) return;
+    if (request.method === 'GET') json(response, { id: taskId, planId, '@odata.etag': 'e1' });
+    else json(response, {});
+  });
+  servers.graph.reset();
+  const result = await cli.run(['update', taskId, other, '--bucket', 'Missing']);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, new RegExp(`#${taskId}:`));
+  assert.match(result.stderr, new RegExp(`#${other}:`));
+});

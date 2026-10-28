@@ -54,7 +54,6 @@ export async function runBulkWrite(ctx: Context, command: 'update' | 'done' | 'd
       }
       process.stdout.write(`${command === 'done' ? 'Completed' : command === 'delete' ? 'Deleted' : 'Updated'} #${id}\n`);
     } catch (error) {
-      if (error instanceof CliError && error.exitCode === 2) throw error;
       const reason = error instanceof Error ? error.message : String(error);
       failures.push(id);
       process.stderr.write(`#${id}: ${reason}\n`);
