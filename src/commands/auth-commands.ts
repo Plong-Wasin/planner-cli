@@ -80,6 +80,7 @@ export interface GraphRequestOptions {
   query?: URLSearchParams;
   body?: string;
   rawUrl?: string;
+  headers?: Record<string, string>;
 }
 
 async function graph(ctx: Context, method: string, path: string, options: GraphRequestOptions = {}, retried = false): Promise<unknown> {
@@ -94,6 +95,7 @@ async function graph(ctx: Context, method: string, path: string, options: GraphR
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: 'application/json',
+        ...options.headers,
         ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       ...(options.body === undefined ? {} : { body: options.body }),
@@ -112,7 +114,7 @@ async function graph(ctx: Context, method: string, path: string, options: GraphR
       404: `Not found: ${method} ${path}. Check the id and path.`,
       429: `Rate limited for ${method} ${path}. Wait, then try again.`,
     };
-    throw new CliError(messages[response.status] || `HTTP ${response.status} for ${method} ${path}.`);
+    throw new CliError(messages[response.status] || `HTTP ${response.status} for ${method} ${path}.`, 1, response.status);
   }
   const text = await response.text();
   return text ? JSON.parse(text) as unknown : undefined;
