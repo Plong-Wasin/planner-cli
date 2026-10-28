@@ -11,6 +11,8 @@ interface Task {
   createdDateTime?: string;
   completedDateTime?: string;
   assignments?: Record<string, unknown>;
+  planId?: string;
+  startDateTime?: string;
   details?: { description?: string; checklist?: Record<string, { title?: string; isChecked?: boolean }> };
   [key: string]: unknown;
 }
@@ -125,28 +127,45 @@ async function showTask(ctx: Context, args: string[]): Promise<void> {
   if (!idInput) usage("Usage: planner task <id|url>.");
   const id = parseTaskId(idInput!);
   const task = await graphRequest(ctx, 'GET', `/planner/tasks/${encodeURIComponent(id)}?$expand=details`) as Task;
-  if (args.includes('--json')) process.stdout.write(`${JSON.stringify(task, null, 2)}\n`);
-  else process.stdout.write(`${JSON.stringify(task, null, 2)}\n`);
+  if (args.includes('--json')) { process.stdout.write(`${JSON.stringify(task, null, 2)}\n`); return; }
+  const planId = typeof task.planId === 'string' ? task.planId : undefined;
+  const bucketNames = new Map<string, string>();
+  const assigneeNames = new Map<string, string>();
+  if (planId && task.bucketId) {
+    const buckets = await graphRequest(ctx, 'GET', `/planner/plans/${encodeURIComponent(planId)}/buckets`) as Collection<Bucket>;
+    for (const bucket of buckets.value ?? []) if (bucket.id) bucketNames.set(bucket.id, bucket.name ?? bucket.id);
+  }
+  const lines = ['id', 'title', 'bucket', 'percent', 'priority', 'start', 'due', 'assignees', 'description', 'checklist']
+    .map((field) => [field, formatField(task, field, bucketNames, assigneeNames, false)] as const)
+    .filter(([, value]) => value !== '')
+    .map(([field, value]) => `${field}: ${value}`);
+  process.stdout.write(`${lines.join('\n')}\n`);
+}
+
+// Planner Task ids are 28-character opaque strings; a GUID is accepted too.
+function isTaskId(value: string): boolean {
+  return /^[A-Za-z0-9_-]{28}$/.test(value) || isGuid(value);
 }
 
 export function parseTaskId(value: string): string {
-  if (isGuid(value)) return value;
+  if (isTaskId(value)) return value;
   let parsed: URL;
-  try { parsed = new URL(value); } catch { usage(`Invalid Task id '${value}'. Pass a Task GUID or Planner Task URL.`); }
+  try { parsed = new URL(value); } catch { usage(`Invalid Task id '${value}'. Pass a Planner Task id or Planner Task URL.`); }
   const parts = parsed!.pathname.split('/').filter(Boolean);
   const candidate = parts.at(-1) ?? '';
-  if (!/^https?:$/.test(parsed!.protocol) || !isGuid(candidate)) usage(`Invalid Task id '${value}'. Pass a Task GUID or Planner Task URL.`);
+  if (!/^https?:$/.test(parsed!.protocol) || !isTaskId(candidate)) usage(`Invalid Task id '${value}'. Pass a Planner Task id or Planner Task URL.`);
   return candidate;
 }
 
-function formatField(task: Task, field: string, buckets: Map<string, string>, members: Map<string, string>): string {
+function formatField(task: Task, field: string, buckets: Map<string, string>, members: Map<string, string>, truncate = true): string {
   if (field === 'title') {
     const title = task.title ?? '';
-    return title.length > TITLE_WIDTH ? `${title.slice(0, TITLE_WIDTH - 1)}…` : title;
+    return truncate && title.length > TITLE_WIDTH ? `${title.slice(0, TITLE_WIDTH - 1)}…` : title;
   }
   if (field === 'bucket') return buckets.get(task.bucketId ?? '') ?? task.bucketId ?? '';
   if (field === 'percent') return task.percentComplete === undefined ? '' : `${task.percentComplete}%`;
   if (field === 'due') return task.dueDateTime?.slice(0, 10) ?? '';
+  if (field === 'start') return task.startDateTime?.slice(0, 10) ?? '';
   if (field === 'assignees') return Object.keys(task.assignments ?? {}).map((id) => members.get(id) ?? id).join(', ');
   if (field === 'description') return task.details?.description ?? '';
   if (field === 'checklist') return Object.values(task.details?.checklist ?? {}).map((item) => `${item.isChecked ? '[x]' : '[ ]'} ${item.title ?? ''}`).join('; ');

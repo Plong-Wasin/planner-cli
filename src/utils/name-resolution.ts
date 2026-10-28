@@ -27,6 +27,21 @@ interface Assignee {
 
 const PAGE_CAP = 100;
 
+// One CLI run is short-lived, so lookups are cached per Context to keep bulk commands at one request per resource.
+const lookups = new WeakMap<Context, Map<string, Promise<unknown>>>();
+
+function cached<T>(ctx: Context, key: string, load: () => Promise<T>): Promise<T> {
+  let entries = lookups.get(ctx);
+  if (!entries) lookups.set(ctx, entries = new Map());
+  let entry = entries.get(key) as Promise<T> | undefined;
+  if (!entry) {
+    entry = load();
+    entries.set(key, entry);
+    entry.catch(() => entries.delete(key));
+  }
+  return entry;
+}
+
 export function isGuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
@@ -51,13 +66,13 @@ export async function resolveBucketId(ctx: Context, plan: string, value: string)
 
 export async function resolveAssigneeId(ctx: Context, plan: string, value: string): Promise<string> {
   if (equal(value, 'me')) {
-    const me = await graphRequest(ctx, 'GET', '/me') as Assignee;
+    const me = await cached(ctx, 'me', () => graphRequest(ctx, 'GET', '/me')) as Assignee;
     if (me.id) return me.id;
     usage("Could not identify the current user. Check the signed-in Profile.");
   }
   if (isGuid(value)) return value;
   const planId = await resolvePlanId(ctx, plan);
-  const selectedPlan = await graphRequest(ctx, 'GET', `/planner/plans/${encodeURIComponent(planId)}`) as Plan;
+  const selectedPlan = await cached(ctx, `plan:${planId}`, () => graphRequest(ctx, 'GET', `/planner/plans/${encodeURIComponent(planId)}`)) as Plan;
   if (!selectedPlan.owner) usage(`Could not find the owning group for Plan '${plan}'. Check the Plan id.`);
   const members = await collection<Assignee>(ctx, `/groups/${encodeURIComponent(selectedPlan.owner)}/members`);
   const matches = members.filter((member) => member.id === value || equal(member.displayName, value)
@@ -66,7 +81,11 @@ export async function resolveAssigneeId(ctx: Context, plan: string, value: strin
   fail('Assignee', value, matches.length > 1, (matches.length ? matches : members).map((member) => `${member.displayName ?? 'Unknown'} <${member.mail ?? member.userPrincipalName ?? 'no email'}> (${member.id ?? 'unknown id'})`));
 }
 
-async function collection<T>(ctx: Context, path: string): Promise<T[]> {
+function collection<T>(ctx: Context, path: string): Promise<T[]> {
+  return cached(ctx, `collection:${path}`, () => loadCollection<T>(ctx, path));
+}
+
+async function loadCollection<T>(ctx: Context, path: string): Promise<T[]> {
   const values: T[] = [];
   let next = path;
   for (let page = 0; page < PAGE_CAP; page += 1) {

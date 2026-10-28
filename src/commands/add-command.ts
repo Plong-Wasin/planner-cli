@@ -86,8 +86,15 @@ async function createTask(ctx: Context, title: string | undefined, options: AddO
   const details: Record<string, unknown> = {};
   if (options.description !== undefined) details.description = loadText(options.description, '--description');
   if (options.checklist !== undefined) details.checklist = checklist(loadText(options.checklist, '--checklist'));
-  if (Object.keys(details).length) await writeDetails(ctx, task.id, details);
+  // Print the id first: the Task exists even if its Details write fails, and the caller needs the id to fix it.
   process.stdout.write(`${task.id}\n`);
+  if (Object.keys(details).length) {
+    try { await writeDetails(ctx, task.id, details); }
+    catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new CliError(`Task ${task.id} was created but its Details were not saved: ${reason}`, error instanceof CliError ? error.exitCode : 1, error instanceof CliError ? error.status : undefined);
+    }
+  }
 }
 
 async function writeDetails(ctx: Context, taskId: string, body: Record<string, unknown>): Promise<void> {
@@ -164,7 +171,15 @@ function bulkOptions(record: Record<string, unknown>): AddOptions {
   for (const key of allowed) {
     const value = record[key];
     if (value === undefined) continue;
-    if (typeof value !== 'string') usage(`Task field '${key}' must be text.`);
+    if (key === 'checklist' && Array.isArray(value) && value.every((item) => typeof item === 'string')) {
+      options.checklist = value.join('\n');
+      continue;
+    }
+    if (key === 'priority' && typeof value === 'number') {
+      options.priority = String(value);
+      continue;
+    }
+    if (typeof value !== 'string') usage(`Task field '${key}' must be text${key === 'checklist' ? ' or a list of text' : key === 'priority' ? ' or a number' : ''}.`);
     if (key === 'title') options.title = value;
     else if (key === 'bucket') options.bucket = value;
     else if (key === 'assign') options.assign = value;
