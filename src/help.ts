@@ -22,6 +22,8 @@ Options:
   --json           Print the raw Graph response
   --all            Follow pages up to the safety cap
   --cursor <token> Continue from a previous page
+  tasks --fields <names> Select Task columns (id,title,bucket,percent,due,assignees)
+  tasks --details     Include Task description and checklist
   -h, --help     Show help
   -v, --version  Show version
 

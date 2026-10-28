@@ -3,6 +3,7 @@ import { VERSION } from './utils/version.js';
 import { runAuth, selectedContext, type GlobalOptions } from './commands/auth-commands.js';
 import { runConfig } from './commands/config-commands.js';
 import { runReadCommand } from './commands/read-commands.js';
+import { runTaskReadCommand } from './commands/task-read-commands.js';
 import { runApi } from './commands/api-commands.js';
 import { CliError, usage } from './utils/errors.js';
 
@@ -46,6 +47,8 @@ async function main(args: string[]): Promise<void> {
   if (command === 'config') return runConfig(ctx, [subcommand, ...commandArgs].filter((value): value is string => value !== undefined));
   if (command === 'api') return runApi(ctx, [subcommand, ...commandArgs].filter((value): value is string => value !== undefined));
   if (command === 'me' || command === 'plans' || command === 'buckets' || command === 'members') return runReadCommand(ctx, command, [subcommand, ...commandArgs].filter((value): value is string => value !== undefined));
+  if (command === 'tasks') return runTaskReadCommand(ctx, 'tasks', [subcommand, ...commandArgs].filter((value): value is string => value !== undefined));
+  if (command === 'task') return runTaskReadCommand(ctx, 'task', [subcommand, ...commandArgs].filter((value): value is string => value !== undefined));
   if (!command) usage("Run 'planner --help' for usage.");
   throw new CliError(`Unknown command: ${command}. Run 'planner --help' for usage.`, USAGE_ERROR);
 }

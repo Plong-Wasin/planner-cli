@@ -34,6 +34,157 @@ it('lists Plans in a compact table from the current user Plans endpoint', async 
   assert.equal(servers.graph.requests[0]?.headers.authorization, 'Bearer read-token');
 });
 
+it('lists Tasks compactly by default and omits Details from the Graph request', async () => {
+  writeFileSync(`${cli.home}/config.json`, JSON.stringify({ profiles: { default: {
+    accessToken: 'read-token', defaultPlan: '00000000-0000-4000-8000-000000000001',
+  } } }));
+  servers.graph.setReply((request, response) => {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    if (request.path.startsWith('/planner/plans/00000000-0000-4000-8000-000000000001/tasks')) {
+      response.end(JSON.stringify({ value: [{
+        id: 'task-1', title: 'Prepare the release', bucketId: 'bucket-1', percentComplete: 50,
+        dueDateTime: '2026-11-03T00:00:00Z', assignments: { 'user-1': {} },
+        details: { description: 'private heavy field', checklist: { item1: { title: 'Check dates', isChecked: false } } },
+      }] }));
+    } else if (request.path === '/planner/plans/00000000-0000-4000-8000-000000000001/buckets') {
+      response.end(JSON.stringify({ value: [{ id: 'bucket-1', name: 'Ready' }] }));
+    } else if (request.path === '/planner/plans/00000000-0000-4000-8000-000000000001') {
+      response.end(JSON.stringify({ owner: 'group-1' }));
+    } else if (request.path === '/groups/group-1/members') {
+      response.end(JSON.stringify({ value: [{ id: 'user-1', displayName: 'Ada Planner' }] }));
+    } else response.end(JSON.stringify({ value: [] }));
+  });
+  servers.graph.reset();
+
+  const result = await cli.run(['tasks']);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /ID\s+TITLE\s+BUCKET\s+PERCENT\s+DUE\s+ASSIGNEES/);
+  assert.match(result.stdout, /task-1\s+Prepare the release\s+Ready\s+50%\s+2026-11-03\s+Ada Planner/);
+  assert.doesNotMatch(result.stdout, /private heavy field/);
+  assert.ok(servers.graph.requests.some(({ path }) => path.startsWith('/planner/plans/00000000-0000-4000-8000-000000000001/tasks?')));
+  assert.ok(servers.graph.requests.every(({ path }) => !path.includes('$expand=details')));
+
+  servers.graph.reset();
+  const detailed = await cli.run(['tasks', '--details']);
+  assert.equal(detailed.code, 0, detailed.stderr);
+  assert.match(detailed.stdout, /DESCRIPTION\s+CHECKLIST/);
+  assert.match(detailed.stdout, /private heavy field/);
+  assert.match(detailed.stdout, /\[ \] Check dates/);
+  assert.equal(new URLSearchParams(servers.graph.requests[0]!.path.split('?')[1]).get('$expand'), 'details');
+});
+
+it('applies Task filters using the fields those filters need', async () => {
+  writeFileSync(`${cli.home}/config.json`, JSON.stringify({ profiles: { default: {
+    accessToken: 'read-token', defaultPlan: '00000000-0000-4000-8000-000000000001',
+  } } }));
+  servers.graph.setReply((request, response) => {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    if (request.path.includes('/tasks?')) response.end(JSON.stringify({ value: [
+      { id: 'one', title: 'Keep', bucketId: '00000000-0000-4000-8000-000000000002', percentComplete: 25, createdDateTime: '2026-10-02T00:00:00Z', completedDateTime: '2026-10-04T00:00:00Z', assignments: { 'user-1': {} } },
+      { id: 'two', title: 'Wrong bucket', bucketId: 'other', percentComplete: 25, createdDateTime: '2026-10-02T00:00:00Z', completedDateTime: '2026-10-04T00:00:00Z', assignments: { 'user-1': {} } },
+      { id: 'three', title: 'Completed', bucketId: '00000000-0000-4000-8000-000000000002', percentComplete: 100, createdDateTime: '2026-10-02T00:00:00Z', completedDateTime: '2026-10-04T00:00:00Z', assignments: { 'user-1': {} } },
+      { id: 'four', title: 'Not mine', bucketId: '00000000-0000-4000-8000-000000000002', percentComplete: 25, createdDateTime: '2026-10-02T00:00:00Z', completedDateTime: '2026-10-04T00:00:00Z', assignments: { 'user-2': {} } },
+      { id: 'five', title: 'Too old', bucketId: '00000000-0000-4000-8000-000000000002', percentComplete: 25, createdDateTime: '2026-09-30T00:00:00Z', completedDateTime: '2026-10-04T00:00:00Z', assignments: { 'user-1': {} } },
+      { id: 'six', title: 'Not completed recently', bucketId: '00000000-0000-4000-8000-000000000002', percentComplete: 25, createdDateTime: '2026-10-02T00:00:00Z', completedDateTime: '2026-09-30T00:00:00Z', assignments: { 'user-1': {} } },
+    ] }));
+    else if (request.path === '/me') response.end(JSON.stringify({ id: 'user-1' }));
+    else response.end(JSON.stringify({ value: [] }));
+  });
+  servers.graph.reset();
+
+  const result = await cli.run(['tasks', '--mine', '--open', '--bucket', '00000000-0000-4000-8000-000000000002', '--created-after', '2026-10-01', '--completed-after', '2026-10-01']);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /Keep/);
+  for (const rejected of ['Wrong bucket', 'Completed', 'Not mine', 'Too old', 'Not completed recently']) assert.doesNotMatch(result.stdout, new RegExp(rejected));
+  const taskRequest = servers.graph.requests.find(({ path }) => path.includes('/tasks?'));
+  assert.ok(taskRequest);
+  const query = new URLSearchParams(taskRequest.path.slice(taskRequest.path.indexOf('?') + 1));
+  assert.equal(query.get('$top'), '50');
+  assert.deepEqual(new Set(query.get('$select')?.split(',')), new Set(['id', 'title', 'bucketId', 'percentComplete', 'dueDateTime', 'assignments', 'createdDateTime', 'completedDateTime']));
+  assert.ok(servers.graph.requests.some(({ path }) => path === '/me'));
+});
+
+it('selects table fields, truncates only table titles, and prints raw Task JSON', async () => {
+  const title = 'A'.repeat(70);
+  const task = { value: [{ id: 'task-1', title }] };
+  servers.graph.setReply((_request, response) => {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify(task));
+  });
+  servers.graph.reset();
+
+  const tableResult = await cli.run(['tasks', '--fields', 'title,id']);
+  assert.equal(tableResult.code, 0, tableResult.stderr);
+  assert.match(tableResult.stdout, /TITLE\s+ID/);
+  assert.match(tableResult.stdout, new RegExp(`A{47}…`));
+  assert.doesNotMatch(tableResult.stdout, new RegExp(`A{48}`));
+  const query = new URLSearchParams(servers.graph.requests[0]!.path.split('?')[1]);
+  assert.equal(query.get('$select'), 'title,id');
+
+  servers.graph.reset();
+  const jsonResult = await cli.run(['tasks', '--fields', 'title,id', '--json']);
+  assert.equal(jsonResult.code, 0, jsonResult.stderr);
+  assert.deepEqual(JSON.parse(jsonResult.stdout), task);
+});
+
+it('shows one Task with Details and accepts only valid ids or Task URLs', async () => {
+  const id = '00000000-0000-4000-8000-000000000010';
+  const task = { id, title: 'Review plan', details: { description: 'Review the Plan', checklist: { item1: { title: 'Check dates', isChecked: false } } } };
+  servers.graph.setReply((request, response) => {
+    assert.equal(request.method, 'GET');
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify(task));
+  });
+  servers.graph.reset();
+
+  const bare = await cli.run(['task', id]);
+  assert.equal(bare.code, 0, bare.stderr);
+  assert.match(bare.stdout, /Review the Plan/);
+  assert.match(bare.stdout, /Check dates/);
+  assert.equal(servers.graph.requests[0]?.path, `/planner/tasks/${id}?$expand=details`);
+
+  servers.graph.reset();
+  const url = await cli.run(['task', `https://planner.example.test/Home/Task/${id}`]);
+  assert.equal(url.code, 0, url.stderr);
+  assert.equal(servers.graph.requests[0]?.path, `/planner/tasks/${id}?$expand=details`);
+
+  servers.graph.reset();
+  const malformed = await cli.run(['task', 'abc123']);
+  assert.equal(malformed.code, 2);
+  assert.match(malformed.stderr, /Invalid Task id/);
+  assert.equal(servers.graph.requests.length, 0);
+});
+
+it('pages through Tasks by default and follows all pages up to the hard cap', async () => {
+  let page = 0;
+  const nextPage = `${servers.graph.url}/planner/plans/00000000-0000-4000-8000-000000000001/tasks?page=2`;
+  servers.graph.setReply((_request, response) => {
+    page += 1;
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ value: [{ id: `task-${page}`, title: `Task ${page}` }], '@odata.nextLink': nextPage }));
+  });
+  writeFileSync(`${cli.home}/config.json`, JSON.stringify({ profiles: { default: {
+    accessToken: 'read-token', defaultPlan: '00000000-0000-4000-8000-000000000001',
+  } } }));
+  servers.graph.reset();
+
+  const first = await cli.run(['tasks']);
+  assert.equal(first.code, 0, first.stderr);
+  assert.match(first.stdout, /Task 1/);
+  assert.match(first.stderr, /more available: --cursor .* \(or --all\)/);
+  assert.equal(new URLSearchParams(servers.graph.requests[0]!.path.split('?')[1]).get('$top'), '50');
+
+  servers.graph.reset();
+  page = 0;
+  const all = await cli.run(['tasks', '--all']);
+  assert.equal(all.code, 0, all.stderr);
+  assert.equal(servers.graph.requests.length, 100);
+  assert.match(all.stdout, /Task 100/);
+  assert.match(all.stderr, /more available: --cursor/);
+});
+
 it('prints a cursor hint and follows Graph continuation links with --all', async () => {
   const nextPage = `${servers.graph.url}/me/planner/plans?$skiptoken=next-page`;
   servers.graph.setReply((request, response) => {
