@@ -12,9 +12,52 @@ interface TaskDetails {
 
 export async function runAdd(ctx: Context, args: string[]): Promise<void> {
   const options = parseOptions(args);
+  if (options.data !== undefined) {
+    if (options.positionals.length || options.bucket !== undefined || options.assign !== undefined || options.noAssign
+      || options.priority !== undefined || options.due !== undefined || options.start !== undefined
+      || options.description !== undefined || options.checklist !== undefined) {
+      usage("Use '--data' with fields on each input record, not Task flags or a title.");
+    }
+    const entries = bulkEntries(loadText(options.data, '--data'));
+    let failed = false;
+    for (const entry of entries) {
+      try {
+        if (entry.error !== undefined) throw new CliError(entry.error, 2);
+        const record = entry.record;
+        if (!record || Array.isArray(record) || typeof record !== 'object') usage('Each Task record must be a JSON object.');
+        const task = bulkOptions(record as Record<string, unknown>);
+        await createTask(ctx, task.title, task);
+      } catch (error) {
+        failed = true;
+        const message = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`line ${entry.line}: ${message}\n`);
+      }
+    }
+    if (failed) process.exitCode = 1;
+    return;
+  }
   const title = options.positionals[0];
   if (!title) usage("Usage: planner add <title> [--bucket <name|id>] [--assign <me|email|name|id>] [options]");
   if (options.positionals.length > 1) usage('Task titles with spaces must be quoted as one argument.');
+
+  await createTask(ctx, title, options);
+}
+
+interface AddOptions {
+  title?: string;
+  bucket?: string;
+  assign?: string;
+  noAssign?: boolean;
+  priority?: string;
+  due?: string;
+  start?: string;
+  description?: string;
+  checklist?: string;
+}
+
+async function createTask(ctx: Context, title: string | undefined, options: AddOptions): Promise<void> {
+  if (!title) usage("Each Task record needs a non-empty 'title'.");
+  if (options.noAssign && options.assign !== undefined) usage("Use either 'assign' or no assignment, not both.");
 
   const requestedPlan = ctx.options.plan || ctx.env.PLANNER_PLAN || ctx.profile.defaultPlan;
   if (!requestedPlan) usage("A Default Plan is required. Set one with 'planner config set plan <name|id>' or pass --plan <name|id>.");
@@ -67,12 +110,12 @@ async function writeDetails(ctx: Context, taskId: string, body: Record<string, u
 
 function parseOptions(args: string[]): {
   positionals: string[]; bucket?: string; assign?: string; noAssign: boolean;
-  priority?: string; due?: string; start?: string; description?: string; checklist?: string;
+  priority?: string; due?: string; start?: string; description?: string; checklist?: string; data?: string;
 } {
   const parsed: ReturnType<typeof parseOptions> = { positionals: [], noAssign: false };
   const valued: Record<string, keyof typeof parsed> = {
     '--bucket': 'bucket', '--assign': 'assign', '--priority': 'priority', '--due': 'due',
-    '--start': 'start', '--description': 'description', '--checklist': 'checklist',
+    '--start': 'start', '--description': 'description', '--checklist': 'checklist', '--data': 'data',
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
@@ -91,6 +134,47 @@ function parseOptions(args: string[]): {
   }
   if (parsed.noAssign && parsed.assign !== undefined) usage("Use either '--assign' or '--no-assign', not both.");
   return parsed;
+}
+
+function bulkEntries(input: string): Array<{ line: number; record?: unknown; error?: string }> {
+  if (input.trimStart().startsWith('[')) {
+    try {
+      const value: unknown = JSON.parse(input);
+      if (Array.isArray(value)) return value.map((record, index) => ({ line: index + 1, record }));
+      return [{ line: 1, record: value }];
+    } catch {
+      // A malformed array is also malformed NDJSON; process each physical line below.
+    }
+  }
+  const entries: Array<{ line: number; record?: unknown; error?: string }> = [];
+  input.split(/\r?\n/).forEach((line, index) => {
+    if (!line.trim()) return;
+    try { entries.push({ line: index + 1, record: JSON.parse(line) as unknown }); }
+    catch { entries.push({ line: index + 1, error: 'Invalid JSON.' }); }
+  });
+  return entries;
+}
+
+function bulkOptions(record: Record<string, unknown>): AddOptions {
+  const allowed = new Set(['title', 'bucket', 'assign', 'priority', 'due', 'start', 'description', 'checklist']);
+  for (const key of Object.keys(record)) {
+    if (!allowed.has(key)) usage(`Unknown Task field '${key}'.`);
+  }
+  const options: AddOptions = {};
+  for (const key of allowed) {
+    const value = record[key];
+    if (value === undefined) continue;
+    if (typeof value !== 'string') usage(`Task field '${key}' must be text.`);
+    if (key === 'title') options.title = value;
+    else if (key === 'bucket') options.bucket = value;
+    else if (key === 'assign') options.assign = value;
+    else if (key === 'priority') options.priority = value;
+    else if (key === 'due') options.due = value;
+    else if (key === 'start') options.start = value;
+    else if (key === 'description') options.description = value;
+    else if (key === 'checklist') options.checklist = value;
+  }
+  return options;
 }
 
 function parsePriority(value: string): number {
