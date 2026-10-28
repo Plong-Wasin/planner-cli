@@ -1,0 +1,25 @@
+{
+  "name": "planner-cli",
+  "version": "0.1.0",
+  "description": "Command-line client for Microsoft Planner",
+  "type": "module",
+  "bin": {
+    "planner": "./dist/planner.js"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "build": "pnpm typecheck && esbuild src/index.ts --bundle --platform=node --target=node20 --format=esm --banner:js=\"#!/usr/bin/env node\" --outfile=dist/planner.js && chmod +x dist/planner.js",
+    "test": "pnpm build && node --test \"test/*.test.ts\""
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  },
+  "private": true,
+  "license": "MIT",
+  "packageManager": "pnpm@12.3.4"
+}
