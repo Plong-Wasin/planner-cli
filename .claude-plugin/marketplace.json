@@ -1,0 +1,14 @@
+{
+  "name": "planner-cli",
+  "description": "Planner CLI agent skills",
+  "owner": {
+    "name": "Planner CLI maintainers"
+  },
+  "plugins": [
+    {
+      "name": "planner-cli",
+      "source": "./plugins/planner-cli",
+      "description": "Read and manage Microsoft Planner Tasks with the planner command-line client"
+    }
+  ]
+}

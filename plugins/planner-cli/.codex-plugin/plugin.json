@@ -1,0 +1,16 @@
+{
+  "name": "planner-cli",
+  "description": "Read and manage Microsoft Planner Tasks with the planner command-line client",
+  "author": {
+    "name": "Planner CLI maintainers"
+  },
+  "license": "MIT",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Planner CLI",
+    "shortDescription": "Read and manage Microsoft Planner Tasks with planner",
+    "developerName": "Planner CLI maintainers",
+    "category": "Developer Tools",
+    "capabilities": []
+  }
+}
