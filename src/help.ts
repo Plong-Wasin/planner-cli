@@ -11,7 +11,7 @@ Commands:
   members    List Plan members
   tasks      List Tasks
   task       Show one Task
-  add        Create Tasks
+  add        Create a Task
   update     Update Tasks
   done       Complete Tasks
   delete     Delete Tasks
@@ -19,6 +19,7 @@ Commands:
 
 Options:
   --plan <name|id> Select a Plan (overrides PLANNER_PLAN and Profile default)
+  --bucket <name|id> Select the Bucket for a new Task
   --json           Print the raw Graph response
   --all            Follow pages up to the safety cap
   --cursor <token> Continue from a previous page
