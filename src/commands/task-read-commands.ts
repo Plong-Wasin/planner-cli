@@ -112,14 +112,12 @@ async function listTasks(ctx: Context, args: string[]): Promise<void> {
   const bucketNames = new Map<string, string>();
   const assigneeNames = new Map<string, string>();
   if (planId && fields.includes('bucket') && tasks.some((task) => task.bucketId)) {
-    const buckets = await graphRequest(ctx, 'GET', `/planner/plans/${encodeURIComponent(planId)}/buckets`) as Collection<Bucket>;
-    for (const bucket of buckets.value ?? []) if (bucket.id) bucketNames.set(bucket.id, bucket.name ?? bucket.id);
+    for (const bucket of await collection<Bucket>(ctx, `/planner/plans/${encodeURIComponent(planId)}/buckets`)) if (bucket.id) bucketNames.set(bucket.id, bucket.name ?? bucket.id);
   }
   if (planId && fields.includes('assignees') && tasks.some((task) => Object.keys(task.assignments ?? {}).length)) {
     const plan = await graphRequest(ctx, 'GET', `/planner/plans/${encodeURIComponent(planId)}`) as Plan;
     if (plan.owner) {
-      const members = await graphRequest(ctx, 'GET', `/groups/${encodeURIComponent(plan.owner)}/members`) as Collection<Member>;
-      for (const member of members.value ?? []) if (member.id) assigneeNames.set(member.id, member.displayName ?? member.mail ?? member.userPrincipalName ?? member.id);
+      for (const member of await collection<Member>(ctx, `/groups/${encodeURIComponent(plan.owner)}/members`)) if (member.id) assigneeNames.set(member.id, member.displayName ?? member.mail ?? member.userPrincipalName ?? member.id);
     }
   }
   const detailFields = args.includes('--details') ? ['description', 'checklist'] : [];
@@ -140,8 +138,7 @@ async function showTask(ctx: Context, args: string[]): Promise<void> {
   const bucketNames = new Map<string, string>();
   const assigneeNames = new Map<string, string>();
   if (planId && task.bucketId) {
-    const buckets = await graphRequest(ctx, 'GET', `/planner/plans/${encodeURIComponent(planId)}/buckets`) as Collection<Bucket>;
-    for (const bucket of buckets.value ?? []) if (bucket.id) bucketNames.set(bucket.id, bucket.name ?? bucket.id);
+    for (const bucket of await collection<Bucket>(ctx, `/planner/plans/${encodeURIComponent(planId)}/buckets`)) if (bucket.id) bucketNames.set(bucket.id, bucket.name ?? bucket.id);
   }
   if (planId && Object.keys(task.assignments ?? {}).length) {
     const plan = await graphRequest(ctx, 'GET', `/planner/plans/${encodeURIComponent(planId)}`) as Plan;

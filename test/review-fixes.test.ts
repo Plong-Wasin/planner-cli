@@ -234,3 +234,94 @@ it('bulk update keeps going after a per-Task usage error', async () => {
   assert.match(result.stderr, new RegExp(`#${taskId}:`));
   assert.match(result.stderr, new RegExp(`#${other}:`));
 });
+
+it('remembers a custom client id on the Profile for later refreshes', async () => {
+  const own = createCli({ PLANNER_LOGIN_URL: servers.login.url, PLANNER_GRAPH_URL: servers.graph.url });
+  try {
+    servers.login.setReply((request, response) => {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      if (request.path.endsWith('/devicecode')) {
+        response.end(JSON.stringify({ device_code: 'dc', user_code: 'CODE', verification_uri: 'https://login.example.test/device', interval: 0.01, expires_in: 30 }));
+      } else if (new URLSearchParams(request.body).get('grant_type') === 'refresh_token') {
+        response.end(JSON.stringify({ access_token: 'fresh', expires_in: 3600 }));
+      } else {
+        response.end(JSON.stringify({ access_token: 'first', refresh_token: 'r1', expires_in: 1 }));
+      }
+    });
+    servers.login.reset();
+    servers.graph.setReply((_request, response) => json(response, { displayName: 'Planner User' }));
+    servers.graph.reset();
+
+    const login = await own.run(['auth', 'login', '--client-id', 'custom-client']);
+    assert.equal(login.code, 0, login.stderr);
+    const check = await own.run(['auth', 'check']);
+    assert.equal(check.code, 0, check.stderr);
+    const refresh = servers.login.requests.find(({ body }) => new URLSearchParams(body).get('grant_type') === 'refresh_token');
+    assert.equal(new URLSearchParams(refresh?.body ?? '').get('client_id'), 'custom-client');
+  } finally {
+    own.cleanup();
+  }
+});
+
+it('does not retry a 503 on POST, and waits before retrying a 503 on GET without Retry-After', async () => {
+  servers.graph.setReply((_request, response) => json(response, { error: { message: 'unavailable' } }, 503));
+  servers.graph.reset();
+  const post = await cli.run(['api', 'POST', '/planner/tasks', '--data', '{}']);
+  assert.equal(post.code, 1);
+  assert.equal(servers.graph.requests.length, 1);
+
+  let calls = 0;
+  servers.graph.setReply((_request, response) => {
+    calls += 1;
+    if (calls === 1) json(response, { error: { message: 'unavailable' } }, 503);
+    else json(response, { ok: true });
+  });
+  servers.graph.reset();
+  const started = Date.now();
+  const get = await cli.run(['api', 'GET', '/me']);
+  assert.equal(get.code, 0, get.stderr);
+  assert.equal(servers.graph.requests.length, 2);
+  assert.ok(Date.now() - started >= 900, 'expected a backoff of about one second');
+});
+
+it('retries the Details read when Planner has not replicated a new Task yet', async () => {
+  let detailReads = 0;
+  servers.graph.setReply((request, response) => {
+    if (lookups(request, response)) return;
+    if (request.method === 'POST') json(response, { id: 'LaggyTaskAAAAAAAAAAAAAAAAAAA' });
+    else if (request.method === 'GET') {
+      detailReads += 1;
+      if (detailReads === 1) json(response, { error: { message: 'not found' } }, 404);
+      else json(response, { '@odata.etag': 'd1' });
+    } else json(response, {});
+  });
+  servers.graph.reset();
+  const result = await cli.run(['add', 'Replication lag', '--description', 'Body']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(servers.graph.requests.some(({ method, path }) => method === 'PATCH' && path.endsWith('/details')));
+});
+
+it('names Assignees in tasks even when the group member list spans pages', async () => {
+  servers.graph.setReply((request, response) => {
+    if (request.path === '/me/planner/plans') json(response, { value: [] });
+    else if (request.path.startsWith(`/planner/plans/${planId}/tasks?`)) json(response, { value: [{ id: 'one', title: 'Owned', percentComplete: 0, assignments: { [userId]: {} } }] });
+    else if (request.path === `/planner/plans/${planId}`) json(response, { id: planId, owner: 'grp' });
+    else if (request.path.startsWith('/groups/grp/members?page=2')) json(response, { value: [{ id: userId, displayName: 'Second Page' }] });
+    else if (request.path.startsWith('/groups/grp/members')) json(response, { value: [], '@odata.nextLink': `${servers.graph.url}/groups/grp/members?page=2` });
+    else json(response, { value: [] });
+  });
+  servers.graph.reset();
+  const result = await cli.run(['tasks']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /Second Page/);
+});
+
+it('rejects --json on write commands instead of ignoring it', async () => {
+  servers.graph.reset();
+  for (const args of [['add', 'x', '--json'], ['update', taskId, '--percent', '5', '--json'], ['done', taskId, '--json'], ['delete', taskId, '--yes', '--json']]) {
+    const result = await cli.run(args);
+    assert.equal(result.code, 2, `${args[0]}: ${result.stderr}`);
+    assert.match(result.stderr, /--json/);
+  }
+  assert.equal(servers.graph.requests.length, 0);
+});

@@ -33,6 +33,11 @@ export function persist(ctx: Context): void {
   saveConfig(ctx.path, ctx.config);
 }
 
+// Refresh tokens are bound to the client that issued them, so a Profile remembers the id it logged in with.
+function clientIdFor(ctx: Context): string {
+  return ctx.options.clientId || ctx.env.PLANNER_CLIENT_ID || ctx.profile.clientId || DEFAULT_CLIENT_ID;
+}
+
 export function tokenEndpoint(ctx: Context): string {
   return `${(ctx.env.PLANNER_LOGIN_URL || 'https://login.microsoftonline.com').replace(/\/$/, '')}/common/oauth2/v2.0/token`;
 }
@@ -49,7 +54,7 @@ export async function getAccessToken(ctx: Context): Promise<string> {
 async function refresh(ctx: Context): Promise<void> {
   if (!ctx.profile.refreshToken) throw new CliError(`Sign-in expired. Run 'planner auth login' to sign in again.`);
   const body = new URLSearchParams({
-    client_id: ctx.options.clientId || ctx.env.PLANNER_CLIENT_ID || DEFAULT_CLIENT_ID,
+    client_id: clientIdFor(ctx),
     grant_type: 'refresh_token',
     refresh_token: ctx.profile.refreshToken,
     scope: SCOPES,
@@ -110,9 +115,12 @@ async function graph(ctx: Context, method: string, path: string, options: GraphR
     await refresh(ctx);
     return graph(ctx, method, path, options, true, throttled);
   }
-  if ((response.status === 429 || response.status === 503) && throttled < MAX_THROTTLE_RETRIES) {
-    const wait = Number(response.headers.get('retry-after'));
-    const seconds = Number.isFinite(wait) && wait >= 0 ? Math.min(wait, MAX_RETRY_WAIT_SECONDS) : 1;
+  // 429 means Graph did not process the request, so any method is safe to repeat; 503 is repeated only when idempotent.
+  const retryable = response.status === 429 || (response.status === 503 && method !== 'POST');
+  if (retryable && throttled < MAX_THROTTLE_RETRIES) {
+    const header = response.headers.get('retry-after');
+    const wait = header === null ? Number.NaN : Number(header);
+    const seconds = Number.isFinite(wait) && wait >= 0 ? Math.min(wait, MAX_RETRY_WAIT_SECONDS) : 2 ** throttled;
     await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
     return graph(ctx, method, path, options, retried, throttled + 1);
   }
@@ -159,7 +167,7 @@ export async function runAuth(ctx: Context, subcommand: string | undefined): Pro
 }
 
 async function login(ctx: Context): Promise<void> {
-  const clientId = ctx.options.clientId || ctx.env.PLANNER_CLIENT_ID || DEFAULT_CLIENT_ID;
+  const clientId = clientIdFor(ctx);
   const base = (ctx.env.PLANNER_LOGIN_URL || 'https://login.microsoftonline.com').replace(/\/$/, '');
   const deviceUrl = `${base}/common/oauth2/v2.0/devicecode`;
   let deviceResponse: Response;
@@ -187,6 +195,7 @@ async function login(ctx: Context): Promise<void> {
     if (response.ok && data.access_token) {
       ctx.profile.accessToken = data.access_token;
       ctx.profile.refreshToken = data.refresh_token;
+      ctx.profile.clientId = clientId;
       ctx.profile.expiresAt = Date.now() + (data.expires_in ?? 3600) * 1000;
       persist(ctx);
       process.stdout.write(`Signed in to Profile '${ctx.profileName}'.\n`);

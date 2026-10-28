@@ -98,10 +98,21 @@ async function createTask(ctx: Context, title: string | undefined, options: AddO
   }
 }
 
+// A just-created Task can briefly have no Details record yet (replication lag), so a 404 is retried a few times.
+async function readNewDetails(ctx: Context, path: string): Promise<TaskDetails> {
+  for (let attempt = 0; ; attempt += 1) {
+    try { return await graphRequest(ctx, 'GET', path) as TaskDetails; }
+    catch (error) {
+      if (!(error instanceof CliError) || error.status !== 404 || attempt >= 4) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+}
+
 async function writeDetails(ctx: Context, taskId: string, body: Record<string, unknown>): Promise<void> {
   const path = `/planner/tasks/${encodeURIComponent(taskId)}/details`;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const current = await graphRequest(ctx, 'GET', path) as TaskDetails;
+    const current = await readNewDetails(ctx, path);
     if (!current?.['@odata.etag']) throw new CliError(`Task Details for '${taskId}' did not include an etag.`);
     try {
       await graphRequest(ctx, 'PATCH', path, {
@@ -128,7 +139,7 @@ function parseOptions(args: string[]): {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
     if (arg === '--no-assign') { parsed.noAssign = true; continue; }
-    if (arg === '--json') continue;
+    if (arg === '--json') usage("Option '--json' is only supported by read commands.");
     const [name, inline] = arg.includes('=') ? [arg.slice(0, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)] : [arg, undefined];
     const key = valued[name];
     if (key) {

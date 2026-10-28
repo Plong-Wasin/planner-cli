@@ -52,14 +52,14 @@ Run `planner --help` for the same command and option reference.
 | `planner members [--plan <name\|id>]` | List members of the selected Plan's owning group. |
 | `planner tasks` | List compact Task rows. Supports `--plan`, `--bucket`, `--mine`, `--open`, `--created-after`, `--completed-after`, `--fields`, `--details`, `--cursor`, `--all`, and `--json`. |
 | `planner task <id\|url>` | Show one Task with Details. |
-| `planner add <title>` | Create a Task in the Default Bucket, assigned to you at `important` Priority by default. Supports `--bucket`, `--assign`, `--no-assign`, `--priority`, `--due`, `--start`, `--description`, `--checklist`, and `--json`. |
+| `planner add <title>` | Create a Task in the Default Bucket, assigned to you at `important` Priority by default. Supports `--bucket`, `--assign`, `--no-assign`, `--priority`, `--due`, `--start`, `--description`, `--checklist`, and `--data` for bulk create. |
 | `planner add --data <@file\|->` | Bulk create Tasks from NDJSON or a JSON array. Input fields are `title`, `bucket`, `assign`, `priority`, `due`, `start`, `description`, and `checklist`. |
 | `planner update <id...>` | Update one or more Tasks. Supports `--bucket`, `--assign`, `--no-assign`, `--priority`, `--due`, `--start`, `--description`, `--checklist`, and `--percent`. |
 | `planner done <id...>` | Mark each Task complete. |
 | `planner delete <id...> --yes` | Delete Tasks. Requires the explicit `--yes` flag. |
 | `planner api <METHOD> <path>` | Send a raw Graph request with optional `key=value` query pairs, `--data <JSON\|@file\|->`, `--header 'Name: value'` (PATCH/DELETE under `/planner/` fetch the etag automatically), and GET-only `--all`. |
 
-Names can be used for Plans, Buckets, and Assignees; ids and pasted Planner Task URLs are also accepted. Ambiguous or unknown names are rejected. Dates accept `YYYY-MM-DD` or a full ISO timestamp. `--description` and `--checklist` accept literal text, `@file`, or `-` for stdin; checklist text uses one item per line. `--json` prints the raw Graph response. Lists show a continuation cursor on stderr when another page is available; use `--cursor` to continue or `--all` to follow pages up to the safety cap.
+Names can be used for Plans, Buckets, and Assignees; ids and pasted Planner Task URLs are also accepted. Ambiguous or unknown names are rejected. Dates accept `YYYY-MM-DD` or a full ISO timestamp. `--description` and `--checklist` accept literal text, `@file`, or `-` for stdin; checklist text uses one item per line. `--json` prints the raw Graph response and is supported by read commands only; write commands reject it. Lists show a continuation cursor on stderr when another page is available; use `--cursor` to continue or `--all` to follow pages up to the safety cap.
 
 ## Why these shortcuts exist
 

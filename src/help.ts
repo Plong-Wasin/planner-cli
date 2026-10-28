@@ -29,23 +29,23 @@ Commands and options:
   buckets | members [--plan <name|id>] [--json] [--all] [--cursor <token>]
   tasks [--plan <name|id>] [--bucket <name|id>] [--mine] [--open]
         [--created-after <date>] [--completed-after <date>]
-        [--fields <id,title,bucket,percent,due,assignees>] [--details]
+        [--fields <id,title,bucket,percent,due,assignees,created,completed,priority,start>] [--details]
         [--json] [--all] [--cursor <token>]
   task <id|url> [--json]
   add <title> [--bucket <name|id>] [--assign <me|email|name|id>] [--no-assign]
       [--priority <urgent|important|medium|low|0-10>] [--due <date>] [--start <date>]
-      [--description <text|@file|->] [--checklist <text|@file|->] [--json]
-  add --data <@file|-> [--json]  Bulk create from NDJSON or a JSON array
+      [--description <text|@file|->] [--checklist <text|@file|->]
+  add --data <@file|->  Bulk create from NDJSON or a JSON array
   update <id...> [--bucket <name|id>] [--assign <me|email|name|id>|--no-assign]
          [--priority <urgent|important|medium|low|0-10>] [--due <date>] [--start <date>]
          [--description <text|@file|->] [--checklist <text|@file|->]
-         [--percent <0-100>] [--json]
-  done <id...> [--json]
-  delete <id...> --yes [--json]
+         [--percent <0-100>]
+  done <id...>
+  delete <id...> --yes
   api <GET|POST|PUT|PATCH|DELETE> <path> [key=value...] [--data <JSON|@file|->] [--header 'Name: value'] [--all]
 
 Common options:
-  --json           Print the raw Graph response
+  --json           Print the raw Graph response (read commands only)
   --all            Follow pages up to the safety cap
   --cursor <token> Continue from a previous page
   -h, --help     Show help

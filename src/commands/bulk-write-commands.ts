@@ -169,7 +169,7 @@ function parseOptions(command: 'update' | 'done' | 'delete', args: string[]): Op
     const arg = args[index]!;
     if (arg === '--yes' && command === 'delete') { parsed.yes = true; continue; }
     if (arg === '--no-assign' && command === 'update') { parsed.noAssign = true; continue; }
-    if (arg === '--json') continue;
+    if (arg === '--json') usage("Option '--json' is only supported by read commands.");
     const [name, inline] = arg.includes('=') ? [arg.slice(0, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)] : [arg, undefined];
     const key = valued[name];
     if (key && command === 'update') {

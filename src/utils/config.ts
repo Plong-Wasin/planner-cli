@@ -7,6 +7,7 @@ export interface Profile {
   accessToken?: string;
   refreshToken?: string;
   expiresAt?: number;
+  clientId?: string;
   defaultPlan?: string;
   defaultBucket?: string;
 }
