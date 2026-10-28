@@ -7,6 +7,7 @@ const SCOPES = 'Group.Read.All Tasks.ReadWrite GroupMember.Read.All Directory.Re
 export interface GlobalOptions {
   profile?: string;
   clientId?: string;
+  plan?: string;
 }
 
 export interface Context {
@@ -77,7 +78,7 @@ interface TokenResponse {
 
 async function graph(ctx: Context, method: string, path: string, retried = false): Promise<unknown> {
   const base = (ctx.env.PLANNER_GRAPH_URL || 'https://graph.microsoft.com/v1.0').replace(/\/$/, '');
-  const url = `${base}${path.startsWith('/') ? path : `/${path}`}`;
+  const url = /^https?:\/\//i.test(path) ? path : `${base}${path.startsWith('/') ? path : `/${path}`}`;
   const token = await getAccessToken(ctx);
   let response: Response;
   try {

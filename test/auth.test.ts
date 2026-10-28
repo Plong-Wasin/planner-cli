@@ -138,14 +138,22 @@ it('reports failed refresh with an auth login hint', async () => {
 
 it('sets and shows Profile defaults while masking credentials', async () => {
   setConfig({ defaultProfile: 'work', profiles: { work: { accessToken: 'visible-no', refreshToken: 'visible-no-too' } } });
+  servers.graph.setReply((request, response) => {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    if (request.path === '/me/planner/plans') {
+      response.end(JSON.stringify({ value: [{ id: '00000000-0000-4000-8000-000000000011', title: 'Roadmap Plan' }] }));
+    } else if (request.path === '/planner/plans/00000000-0000-4000-8000-000000000011/buckets') {
+      response.end(JSON.stringify({ value: [{ id: '00000000-0000-4000-8000-000000000012', name: 'Ready' }] }));
+    } else response.end(JSON.stringify({ value: [] }));
+  });
   const plan = await cli.run(['config', 'set', 'plan', 'Roadmap Plan', '-p', 'work']);
   assert.equal(plan.code, 0);
   const bucket = await cli.run(['config', 'set', 'bucket', 'Ready', '-p', 'work']);
   assert.equal(bucket.code, 0);
   const shown = await cli.run(['config', 'show']);
   assert.equal(shown.code, 0);
-  assert.match(shown.stdout, /Roadmap Plan/);
-  assert.match(shown.stdout, /Ready/);
+  assert.match(shown.stdout, /00000000-0000-4000-8000-000000000011/);
+  assert.match(shown.stdout, /00000000-0000-4000-8000-000000000012/);
   assert.doesNotMatch(shown.stdout, /visible-no/);
   assert.equal((JSON.parse(shown.stdout) as { profiles: Record<string, { accessToken: string }> }).profiles.work?.accessToken, '********');
 });

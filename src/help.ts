@@ -18,6 +18,10 @@ Commands:
   api        Send a raw Microsoft Graph request
 
 Options:
+  --plan <name|id> Select a Plan (overrides PLANNER_PLAN and Profile default)
+  --json           Print the raw Graph response
+  --all            Follow pages up to the safety cap
+  --cursor <token> Continue from a previous page
   -h, --help     Show help
   -v, --version  Show version
 
