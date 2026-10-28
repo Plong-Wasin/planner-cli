@@ -73,7 +73,8 @@ export async function runReadCommand(ctx: Context, command: string, args: string
     else {
       try { result = await readCollection<Member>(ctx, `/groups/${encodeURIComponent(owner)}/members`, args); }
       catch (error) {
-        if (!(error instanceof CliError && error.status === 404)) throw error;
+        // A failed continuation is not evidence that the Plan is personal.
+        if (!(error instanceof CliError && error.status === 404) || option(args, '--cursor')) throw error;
         result = await ownerOnly();
       }
     }

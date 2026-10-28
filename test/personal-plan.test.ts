@@ -82,3 +82,35 @@ it('still reports a missing group as an error when the owner is not a user eithe
   assert.equal(result.code, 1);
   assert.match(result.stderr, /Not found/);
 });
+
+it('resolves an Assignee by name on a personal Plan', async () => {
+  servers.graph.setReply((request, response) => {
+    const path = request.path.split('?')[0] ?? '';
+    if (path === `/planner/plans/${planId}`) json(response, { id: planId, owner: ownerId, container: { url: `${servers.graph.url}/users/${ownerId}` } });
+    else if (path === `/planner/plans/${planId}/buckets`) json(response, { value: [{ id: 'BuckBBBBBBBBBBBBBBBBBBBBBBBB', name: 'To do' }] });
+    else if (path === `/users/${ownerId}`) json(response, { id: ownerId, displayName: 'Plan Owner', mail: 'owner@example.test' });
+    else if (path === '/planner/tasks' && request.method === 'POST') json(response, { id: taskId }, 201);
+    else json(response, { value: [] });
+  });
+  servers.graph.reset();
+  const result = await cli.run(['add', 'Named', '--bucket', 'To do', '--assign', 'Plan Owner']);
+  assert.equal(result.code, 0, result.stderr);
+  const post = servers.graph.requests.find((request) => request.method === 'POST' && request.path === '/planner/tasks');
+  assert.ok(post, 'task was created');
+  assert.deepEqual(Object.keys(JSON.parse(post.body).assignments), [ownerId]);
+});
+
+it('does not mask a failed --cursor continuation as an owner-only member list', async () => {
+  servers.graph.setReply((request, response) => {
+    const path = request.path.split('?')[0] ?? '';
+    if (path === `/planner/plans/${planId}`) json(response, { id: planId, owner: ownerId });
+    else if (path === '/me/planner/plans') json(response, { value: [{ id: planId, title: 'Mine', owner: ownerId }] });
+    else if (path === `/users/${ownerId}`) json(response, { id: ownerId, displayName: 'Plan Owner' });
+    else json(response, { error: { code: 'Request_ResourceNotFound', message: 'expired' } }, 404);
+  });
+  const cursor = Buffer.from(`${servers.graph.url}/groups/some-group/members?page=2`).toString('base64url');
+  const result = await cli.run(['members', '--cursor', cursor]);
+  assert.equal(result.code, 1, result.stderr);
+  assert.match(result.stderr, /Not found: GET .*\/groups\/some-group/);
+  assert.doesNotMatch(result.stdout, /Plan Owner/);
+});
