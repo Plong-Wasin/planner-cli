@@ -70,7 +70,7 @@ async function collection<T>(ctx: Context, path: string): Promise<T[]> {
   const values: T[] = [];
   let next = path;
   for (let page = 0; page < PAGE_CAP; page += 1) {
-    const response = await graphRequest(ctx, 'GET', next) as GraphCollection<T>;
+    const response = await graphPage(ctx, next) as GraphCollection<T>;
     values.push(...(response.value ?? []));
     if (!response['@odata.nextLink']) return values;
     next = response['@odata.nextLink'];
@@ -79,12 +79,20 @@ async function collection<T>(ctx: Context, path: string): Promise<T[]> {
   return values;
 }
 
+function graphPage(ctx: Context, url: string): Promise<unknown> {
+  return /^https?:\/\//i.test(url)
+    ? graphRequest(ctx, 'GET', url, { rawUrl: url })
+    : graphRequest(ctx, 'GET', url);
+}
+
 function validateNext(value: string, ctx: Context): void {
   let link: URL;
   try { link = new URL(value, ctx.env.PLANNER_GRAPH_URL || 'https://graph.microsoft.com/v1.0'); }
   catch { usage('Graph returned an invalid continuation URL while resolving a name.'); }
-  const origin = new URL(ctx.env.PLANNER_GRAPH_URL || 'https://graph.microsoft.com/v1.0').origin;
-  if (link.origin !== origin) usage('Graph returned a continuation URL outside the configured Graph host.');
+  const base = new URL(ctx.env.PLANNER_GRAPH_URL || 'https://graph.microsoft.com/v1.0');
+  const basePath = base.pathname.replace(/\/$/, '');
+  const inBasePath = !basePath || link.pathname === basePath || link.pathname.startsWith(`${basePath}/`);
+  if (link.origin !== base.origin || !inBasePath) usage('Graph returned a continuation URL outside the configured Graph URL.');
 }
 
 function equal(left: string | undefined, right: string): boolean {

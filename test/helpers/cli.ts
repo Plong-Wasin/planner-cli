@@ -13,7 +13,7 @@ export interface RunResult {
 
 export interface Cli {
   home: string;
-  run(args: string[], env?: Record<string, string>): Promise<RunResult>;
+  run(args: string[], env?: Record<string, string>, stdin?: string): Promise<RunResult>;
   cleanup(): void;
 }
 
@@ -23,7 +23,7 @@ export function createCli(env: Record<string, string> = {}): Cli {
 
   return {
     home,
-    run: (args, extraEnv = {}) => new Promise((resolve, reject) => {
+    run: (args, extraEnv = {}, stdin) => new Promise((resolve, reject) => {
       const child = spawn(process.execPath, [BIN, ...args], {
         // Intentionally do not spread process.env: developer settings must not leak in.
         env: {
@@ -33,15 +33,19 @@ export function createCli(env: Record<string, string> = {}): Cli {
           ...env,
           ...extraEnv,
         },
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       });
 
       let stdout = '';
       let stderr = '';
-      child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk; });
-      child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
+      child.stdout?.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk; });
+      child.stderr?.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
       child.on('error', reject);
       child.on('close', (code) => resolve({ code, stdout, stderr }));
+      if (stdin !== undefined) {
+        child.stdin?.write(stdin);
+        child.stdin?.end();
+      }
     }),
     cleanup: () => rmSync(home, { recursive: true, force: true }),
   };

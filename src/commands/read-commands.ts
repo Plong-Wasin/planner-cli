@@ -107,7 +107,7 @@ async function readCollection<T>(ctx: Context, path: string, args: string[]): Pr
   const pages: Collection<T>[] = [];
   let nextLink: string | undefined;
   for (let page = 0; page < (all ? ALL_PAGE_CAP : 1); page += 1) {
-    const result = await graphRequest(ctx, 'GET', url) as Collection<T>;
+    const result = await graphPage(ctx, url) as Collection<T>;
     pages.push(result);
     nextLink = result['@odata.nextLink'];
     if (!all || !nextLink) break;
@@ -121,6 +121,12 @@ async function readCollection<T>(ctx: Context, path: string, args: string[]): Pr
   return { response, items, nextLink };
 }
 
+function graphPage(ctx: Context, url: string): Promise<unknown> {
+  return /^https?:\/\//i.test(url)
+    ? graphRequest(ctx, 'GET', url, { rawUrl: url })
+    : graphRequest(ctx, 'GET', url);
+}
+
 function graphOrigin(ctx: Context): string {
   return new URL(ctx.env.PLANNER_GRAPH_URL || 'https://graph.microsoft.com/v1.0').origin;
 }
@@ -129,7 +135,9 @@ function validateContinuation(link: string, ctx: Context): void {
   let url: URL;
   try { url = new URL(link, ctx.env.PLANNER_GRAPH_URL || 'https://graph.microsoft.com/v1.0'); }
   catch { usage('Graph returned an invalid continuation URL.'); }
-  if (url.origin !== graphOrigin(ctx)) usage('Graph returned a continuation URL outside the configured Graph host.');
+  const basePath = new URL(ctx.env.PLANNER_GRAPH_URL || 'https://graph.microsoft.com/v1.0').pathname.replace(/\/$/, '');
+  const inBasePath = !basePath || url.pathname === basePath || url.pathname.startsWith(`${basePath}/`);
+  if (url.origin !== graphOrigin(ctx) || !inBasePath) usage('Graph returned a continuation URL outside the configured Graph URL.');
 }
 
 function decodeCursor(token: string, ctx: Context): string {

@@ -76,19 +76,34 @@ interface TokenResponse {
   error_description?: string;
 }
 
-async function graph(ctx: Context, method: string, path: string, retried = false): Promise<unknown> {
+export interface GraphRequestOptions {
+  query?: URLSearchParams;
+  body?: string;
+  rawUrl?: string;
+}
+
+async function graph(ctx: Context, method: string, path: string, options: GraphRequestOptions = {}, retried = false): Promise<unknown> {
   const base = (ctx.env.PLANNER_GRAPH_URL || 'https://graph.microsoft.com/v1.0').replace(/\/$/, '');
-  const url = /^https?:\/\//i.test(path) ? path : `${base}${path.startsWith('/') ? path : `/${path}`}`;
+  const url = new URL(options.rawUrl || `${base}${path.startsWith('/') ? path : `/${path}`}`);
+  options.query?.forEach((value, key) => url.searchParams.append(key, value));
   const token = await getAccessToken(ctx);
   let response: Response;
   try {
-    response = await fetch(url, { method, headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+    response = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+        ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      ...(options.body === undefined ? {} : { body: options.body }),
+    });
   } catch {
     throw new CliError(`Cannot reach ${url} for ${method} ${path}. Check the network and Graph URL.`);
   }
   if (response.status === 401 && !retried && !ctx.env.PLANNER_TOKEN && ctx.profile.refreshToken) {
     await refresh(ctx);
-    return graph(ctx, method, path, true);
+    return graph(ctx, method, path, options, true);
   }
   if (!response.ok) {
     const messages: Record<number, string> = {
@@ -177,8 +192,8 @@ interface DeviceCode {
   expires_in?: number;
 }
 
-export async function graphRequest(ctx: Context, method: string, path: string): Promise<unknown> {
-  return graph(ctx, method, path);
+export async function graphRequest(ctx: Context, method: string, path: string, options?: GraphRequestOptions): Promise<unknown> {
+  return graph(ctx, method, path, options);
 }
 
 export function selectedContext(env: NodeJS.ProcessEnv, options: GlobalOptions): Context {
