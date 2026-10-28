@@ -1,5 +1,5 @@
 import { graphRequest, type Context } from '../commands/auth-commands.js';
-import { usage } from './errors.js';
+import { CliError, usage } from './errors.js';
 
 interface GraphCollection<T> {
   value?: T[];
@@ -11,6 +11,7 @@ interface Plan {
   title?: string;
   name?: string;
   owner?: string;
+  container?: { url?: string };
 }
 
 interface Bucket {
@@ -81,11 +82,32 @@ export async function resolveAssigneeId(ctx: Context, plan: string, value: strin
   const planId = await resolvePlanId(ctx, plan);
   const selectedPlan = await cached(ctx, `plan:${planId}`, () => graphRequest(ctx, 'GET', `/planner/plans/${encodeURIComponent(planId)}`)) as Plan;
   if (!selectedPlan.owner) usage(`Could not find the owning group for Plan '${plan}'. Check the Plan id.`);
-  const members = await collection<Assignee>(ctx, `/groups/${encodeURIComponent(selectedPlan.owner)}/members`);
+  const members = await planMembers(ctx, selectedPlan);
   const matches = members.filter((member) => member.id === value || equal(member.displayName, value)
     || equal(member.mail, value) || equal(member.userPrincipalName, value));
   if (matches.length === 1 && matches[0]?.id) return matches[0].id;
   fail('Assignee', value, matches.length > 1, (matches.length ? matches : members).map((member) => `${member.displayName ?? 'Unknown'} <${member.mail ?? member.userPrincipalName ?? 'no email'}> (${member.id ?? 'unknown id'})`));
+}
+
+// A personal Plan has no owning group: Graph reports the owning user in `owner` and `container.url`,
+// and `/groups/<user id>` is a 404. The owner is then the Plan's only member.
+export function isPersonalPlan(plan: Plan): boolean {
+  return /\/users\/[^/]+\/?$/i.test(plan.container?.url ?? '');
+}
+
+export function personalPlanMember(ctx: Context, owner: string): Promise<Assignee> {
+  return cached(ctx, `user:${owner}`, () => graphRequest(ctx, 'GET', `/users/${encodeURIComponent(owner)}?$select=id,displayName,mail,userPrincipalName`)) as Promise<Assignee>;
+}
+
+export async function planMembers(ctx: Context, plan: Plan): Promise<Assignee[]> {
+  if (!plan.owner) return [];
+  if (isPersonalPlan(plan)) return [await personalPlanMember(ctx, plan.owner)];
+  try {
+    return await collection<Assignee>(ctx, `/groups/${encodeURIComponent(plan.owner)}/members`);
+  } catch (error) {
+    if (error instanceof CliError && error.status === 404) return [await personalPlanMember(ctx, plan.owner)];
+    throw error;
+  }
 }
 
 export function collection<T>(ctx: Context, path: string): Promise<T[]> {
