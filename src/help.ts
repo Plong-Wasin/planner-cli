@@ -11,7 +11,7 @@ Commands:
   members    List Plan members
   tasks      List Tasks
   task       Show one Task
-  add        Create a Task
+  add        Create a Task or bulk create from NDJSON/JSON with --data @file|-
   update     Update Tasks
   done       Complete Tasks
   delete     Delete Tasks

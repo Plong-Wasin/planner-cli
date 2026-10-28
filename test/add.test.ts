@@ -191,3 +191,69 @@ it('reports a second Details conflict after exactly one retry', async () => {
   assert.match(result.stderr, /Task Details for 'task-conflict' changed twice/);
   assert.equal(patchCount, 2);
 });
+
+it('creates valid NDJSON Tasks around a bad line and reports the line error', async () => {
+  let taskNumber = 0;
+  servers.graph.setReply((request, response) => {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    if (request.method === 'POST' && request.path === '/planner/tasks') {
+      taskNumber += 1;
+      response.end(JSON.stringify({ id: `bulk-${taskNumber}` }));
+    } else if (request.path === '/me') response.end(JSON.stringify({ id: userId }));
+    else response.end(JSON.stringify({ value: [] }));
+  });
+  servers.graph.reset();
+
+  const result = await cli.run(['add', '--data', '-'], {}, [
+    JSON.stringify({ title: 'First task', assign: 'me' }),
+    JSON.stringify({ title: 'Bad priority', priority: 'immediate' }),
+    JSON.stringify({ title: 'Last task', assign: 'me' }),
+  ].join('\n'));
+
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, 'bulk-1\nbulk-2\n');
+  assert.match(result.stderr, /line 2: Priority must be urgent, important, medium, low, or a number from 0 to 10\./);
+  assert.equal(servers.graph.requests.filter(({ method, path }) => method === 'POST' && path === '/planner/tasks').length, 2);
+});
+
+it('creates Tasks from a JSON array with CLI names and default values', async () => {
+  const dataPath = join(cli.home, 'tasks.json');
+  writeFileSync(dataPath, JSON.stringify([
+    { title: 'Named bucket task', bucket: 'Ready', assign: 'Ada Planner', priority: 'urgent', due: '2026-04-05', start: '2026-04-01', description: 'Bulk details', checklist: 'Step one\nStep two' },
+    { title: 'Default task' },
+  ]));
+  servers.graph.setReply((request, response) => {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    if (request.path === '/me/planner/plans') response.end(JSON.stringify({ value: [{ id: planId, title: 'Roadmap' }] }));
+    else if (request.path === `/planner/plans/${planId}/buckets`) response.end(JSON.stringify({ value: [{ id: bucketId, name: 'Ready' }] }));
+    else if (request.path === `/planner/plans/${planId}`) response.end(JSON.stringify({ id: planId, owner: 'group-1' }));
+    else if (request.path === '/groups/group-1/members') response.end(JSON.stringify({ value: [{ id: userId, displayName: 'Ada Planner', mail: 'ada@example.test' }] }));
+    else if (request.path === '/me') response.end(JSON.stringify({ id: userId }));
+    else if (request.method === 'POST' && request.path === '/planner/tasks') {
+      const count = servers.graph.requests.filter(({ method, path }) => method === 'POST' && path === '/planner/tasks').length;
+      response.end(JSON.stringify({ id: `array-${count}` }));
+    } else if (request.path.endsWith('/details')) response.end(JSON.stringify({ '@odata.etag': 'bulk-etag' }));
+    else response.end('{}');
+  });
+  servers.graph.reset();
+
+  const result = await cli.run(['add', '--data', `@${dataPath}`]);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stdout, 'array-1\narray-2\n');
+  const creates = servers.graph.requests.filter(({ method, path }) => method === 'POST' && path === '/planner/tasks');
+  assert.deepEqual(JSON.parse(creates[0]?.body ?? ''), {
+    planId, bucketId, title: 'Named bucket task', priority: 1,
+    dueDateTime: '2026-04-05T00:00:00.000Z',
+    startDateTime: '2026-04-01T00:00:00.000Z',
+    assignments: { [userId]: { '@odata.type': 'microsoft.graph.plannerAssignment', orderHint: ' !' } },
+  });
+  assert.deepEqual(JSON.parse(creates[1]?.body ?? ''), {
+    planId, bucketId, title: 'Default task', priority: 3,
+    assignments: { [userId]: { '@odata.type': 'microsoft.graph.plannerAssignment', orderHint: ' !' } },
+  });
+  const detailsPatch = servers.graph.requests.find(({ method }) => method === 'PATCH');
+  const detailsBody = JSON.parse(detailsPatch?.body ?? '') as { description: string; checklist: Record<string, { title: string }> };
+  assert.equal(detailsBody.description, 'Bulk details');
+  assert.deepEqual(Object.values(detailsBody.checklist).map(({ title }) => title), ['Step one', 'Step two']);
+});
