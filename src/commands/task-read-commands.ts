@@ -99,26 +99,43 @@ async function listTasks(ctx: Context, args: string[]): Promise<void> {
 
   if (allPlans) {
     const plans = await collection<PlanRef>(ctx, '/me/planner/plans');
+    const groups: { plan: PlanRef; tasks: Task[] }[] = [];
+    if (meId !== undefined) {
+      // Graph already lists the Tasks assigned to the user across every Plan, so one paged request replaces a request per Plan.
+      const result = await collectTasks(ctx, `/me/planner/tasks?${query}`, keep, all, filtered);
+      if (result.nextLink) process.stderr.write('more Tasks than the safety cap; narrow it with --search or other filters.\n');
+      const byPlan = new Map<string, Task[]>();
+      for (const task of result.tasks) {
+        const id = typeof task.planId === 'string' ? task.planId : '';
+        const group = byPlan.get(id);
+        if (group) group.push(task); else byPlan.set(id, [task]);
+      }
+      for (const [id, tasks] of byPlan) groups.push({ plan: plans.find((plan) => plan.id === id) ?? { id }, tasks });
+    } else {
+      for (const plan of plans) {
+        if (!plan.id) continue;
+        // A Plan can be listed yet unreadable (its group was deleted, access was removed); skip it instead of losing every other Plan.
+        const result = await collectTasks(ctx, `/planner/plans/${encodeURIComponent(plan.id)}/tasks?${query}`, keep, all, filtered).catch((error: unknown) => {
+          if (!isUnreadable(error)) throw error;
+          process.stderr.write(`skipped plan '${plan.title ?? plan.id}': ${(error as CliError).message}\n`);
+          return undefined;
+        });
+        if (!result) continue;
+        if (result.nextLink) process.stderr.write(`plan '${plan.title ?? plan.id}' has more Tasks than the safety cap; narrow it with --search or other filters.\n`);
+        if (result.tasks.length) groups.push({ plan, tasks: result.tasks });
+      }
+    }
     const found: Task[] = [];
     const rows: string[][] = [];
-    for (const plan of plans) {
+    for (const { plan, tasks } of groups) {
       if (!plan.id) continue;
-      // A Plan can be listed yet unreadable (its group was deleted, access was removed); skip it instead of losing every other Plan.
-      const result = await collectTasks(ctx, `/planner/plans/${encodeURIComponent(plan.id)}/tasks?${query}`, keep, all, filtered).catch((error: unknown) => {
-        if (!isUnreadable(error)) throw error;
-        process.stderr.write(`skipped plan '${plan.title ?? plan.id}': ${(error as CliError).message}\n`);
-        return undefined;
-      });
-      if (!result) continue;
-      if (result.nextLink) process.stderr.write(`plan '${plan.title ?? plan.id}' has more Tasks than the safety cap; narrow it with --search or other filters.\n`);
-      if (!result.tasks.length) continue;
-      found.push(...result.tasks);
-      const names = await nameMaps(ctx, plan.id, plan, fields, result.tasks).catch((error: unknown) => {
+      found.push(...tasks);
+      const names = await nameMaps(ctx, plan.id, plan.owner ? plan : undefined, fields, tasks).catch((error: unknown) => {
         if (!isUnreadable(error)) throw error;
         process.stderr.write(`could not resolve Bucket or Assignee names for plan '${plan.title ?? plan.id}': ${(error as CliError).message}\n`);
         return { buckets: new Map<string, string>(), assignees: new Map<string, string>() };
       });
-      for (const task of result.tasks) rows.push([plan.title ?? plan.id, ...displayFields.map((field) => formatField(task, field, names.buckets, names.assignees))]);
+      for (const task of tasks) rows.push([plan.title ?? plan.id, ...displayFields.map((field) => formatField(task, field, names.buckets, names.assignees))]);
     }
     if (args.includes('--json')) {
       process.stdout.write(`${JSON.stringify({ value: found }, null, 2)}\n`);
