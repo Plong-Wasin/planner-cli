@@ -24,6 +24,7 @@ interface Collection<T> {
 }
 
 interface Plan { owner?: string; container?: { url?: string } }
+interface PlanRef extends Plan { id?: string; title?: string }
 interface Bucket { id?: string; name?: string }
 interface Member { id?: string; displayName?: string; mail?: string; userPrincipalName?: string }
 
@@ -43,10 +44,15 @@ export async function runTaskReadCommand(ctx: Context, command: 'tasks' | 'task'
 }
 
 async function listTasks(ctx: Context, args: string[]): Promise<void> {
-  const planInput = option(args, '--plan') ?? ctx.options.plan ?? ctx.env.PLANNER_PLAN ?? ctx.profile.defaultPlan;
+  const allPlans = args.includes('--all-plans');
+  if (allPlans && (option(args, '--plan') !== undefined || ctx.options.plan !== undefined || option(args, '--bucket') !== undefined || option(args, '--cursor') !== undefined)) {
+    usage("Option '--all-plans' cannot be combined with --plan, --bucket, or --cursor.");
+  }
+  const planInput = allPlans ? undefined : option(args, '--plan') ?? ctx.options.plan ?? ctx.env.PLANNER_PLAN ?? ctx.profile.defaultPlan;
   const planId = planInput ? await resolvePlanId(ctx, planInput) : undefined;
   const bucketInput = option(args, '--bucket');
   const bucketId = bucketInput ? (isGuid(bucketInput) ? bucketInput : planId ? await resolveBucketId(ctx, planId, bucketInput) : usage("A Default Plan is required to resolve a Bucket name; pass --plan <name|id>.")) : undefined;
+  const search = option(args, '--search')?.toLocaleLowerCase();
   const fieldsArg = option(args, '--fields');
   const fields = fieldsArg ? fieldsArg.split(',').map((field) => field.trim()).filter(Boolean) : DEFAULT_FIELDS;
   if (!fields.length || fields.some((field) => !Object.hasOwn(FIELD_MAP, field))) {
@@ -54,6 +60,8 @@ async function listTasks(ctx: Context, args: string[]): Promise<void> {
   }
   const selected = new Set(fields.map((field) => FIELD_MAP[field]!));
   if (bucketId) selected.add('bucketId');
+  if (search !== undefined) selected.add('title');
+  if (allPlans) selected.add('planId');
   if (args.includes('--mine')) selected.add('assignments');
   if (args.includes('--open')) selected.add('percentComplete');
   if (option(args, '--created-after')) selected.add('createdDateTime');
@@ -63,10 +71,7 @@ async function listTasks(ctx: Context, args: string[]): Promise<void> {
   query.set('$top', String(DEFAULT_PAGE_SIZE));
   query.set('$select', [...selected].join(','));
   if (args.includes('--details')) query.set('$expand', 'details');
-  const basePath = planId ? `/planner/plans/${encodeURIComponent(planId)}/tasks` : '/me/planner/tasks';
-  const cursor = option(args, '--cursor');
-  let url = cursor ? decodeCursor(cursor, ctx) : `${basePath}?${query}`;
-  const all = args.includes('--all');
+  const all = args.includes('--all') || allPlans;
   const createdAfter = option(args, '--created-after');
   const createdBound = createdAfter ? dateBound(createdAfter, '--created-after') : undefined;
   const completedAfter = option(args, '--completed-after');
@@ -77,28 +82,44 @@ async function listTasks(ctx: Context, args: string[]): Promise<void> {
     if (!me.id) usage('Could not identify the current user for --mine.');
     meId = me.id;
   }
+  // The search text is matched against the title, and against the description when --details loads it.
   const keep = (task: Task): boolean => (meId === undefined || Object.hasOwn(task.assignments ?? {}, meId))
     && (!args.includes('--open') || (task.percentComplete ?? 0) < 100)
     && (!bucketId || task.bucketId === bucketId)
     && (createdBound === undefined || after(task.createdDateTime, createdBound))
-    && (completedBound === undefined || after(task.completedDateTime, completedBound));
+    && (completedBound === undefined || after(task.completedDateTime, completedBound))
+    && (search === undefined || (task.title ?? '').toLocaleLowerCase().includes(search) || (task.details?.description ?? '').toLocaleLowerCase().includes(search));
   const filtered = meId !== undefined || args.includes('--open') || bucketId !== undefined
-    || createdBound !== undefined || completedBound !== undefined;
+    || createdBound !== undefined || completedBound !== undefined || search !== undefined;
 
-  // Filters run client-side, so keep paging until a full page of matches (or the end) instead of filtering one page.
-  const pages: Collection<Task>[] = [];
-  const tasks: Task[] = [];
-  let nextLink: string | undefined;
-  for (let page = 0; page < (all || filtered ? PAGE_CAP : 1); page += 1) {
-    const result = await graphPage(ctx, url) as Collection<Task>;
-    pages.push(result);
-    tasks.push(...(result.value ?? []).filter(keep));
-    nextLink = result['@odata.nextLink'];
-    if (!nextLink || (!all && tasks.length >= DEFAULT_PAGE_SIZE)) break;
-    if (!all && !filtered) break;
-    validateContinuation(nextLink, ctx);
-    url = nextLink;
+  const detailFields = args.includes('--details') ? ['description', 'checklist'] : [];
+  const displayFields = [...fields, ...detailFields];
+
+  if (allPlans) {
+    const plans = await collection<PlanRef>(ctx, '/me/planner/plans');
+    const found: Task[] = [];
+    const rows: string[][] = [];
+    for (const plan of plans) {
+      if (!plan.id) continue;
+      const result = await collectTasks(ctx, `/planner/plans/${encodeURIComponent(plan.id)}/tasks?${query}`, keep, all, filtered);
+      if (result.nextLink) process.stderr.write(`plan '${plan.title ?? plan.id}' has more Tasks than the safety cap; narrow the search.\n`);
+      if (!result.tasks.length) continue;
+      found.push(...result.tasks);
+      const names = await nameMaps(ctx, plan.id, plan, fields, result.tasks);
+      for (const task of result.tasks) rows.push([plan.title ?? plan.id, ...displayFields.map((field) => formatField(task, field, names.buckets, names.assignees))]);
+    }
+    if (args.includes('--json')) {
+      process.stdout.write(`${JSON.stringify({ value: found }, null, 2)}\n`);
+      return;
+    }
+    process.stdout.write(table(['PLAN', ...displayFields.map((field) => field.toUpperCase())], rows));
+    return;
   }
+
+  const basePath = planId ? `/planner/plans/${encodeURIComponent(planId)}/tasks` : '/me/planner/tasks';
+  const cursor = option(args, '--cursor');
+  const start = cursor ? decodeCursor(cursor, ctx) : `${basePath}?${query}`;
+  const { pages, tasks, nextLink } = await collectTasks(ctx, start, keep, all, filtered);
 
   const first = pages[0] ?? { value: [] };
   const response: Collection<Task> = all ? { ...first, value: tasks, ...(nextLink ? { '@odata.nextLink': nextLink } : {}) } : { ...first, value: tasks };
@@ -109,21 +130,44 @@ async function listTasks(ctx: Context, args: string[]): Promise<void> {
     return;
   }
 
-  const bucketNames = new Map<string, string>();
-  const assigneeNames = new Map<string, string>();
-  if (planId && fields.includes('bucket') && tasks.some((task) => task.bucketId)) {
-    for (const bucket of await collection<Bucket>(ctx, `/planner/plans/${encodeURIComponent(planId)}/buckets`)) if (bucket.id) bucketNames.set(bucket.id, bucket.name ?? bucket.id);
-  }
-  if (planId && fields.includes('assignees') && tasks.some((task) => Object.keys(task.assignments ?? {}).length)) {
-    const plan = await graphRequest(ctx, 'GET', `/planner/plans/${encodeURIComponent(planId)}`) as Plan;
-    for (const member of await planMembers(ctx, plan)) if (member.id) assigneeNames.set(member.id, member.displayName ?? member.mail ?? member.userPrincipalName ?? member.id);
-  }
-  const detailFields = args.includes('--details') ? ['description', 'checklist'] : [];
-  const displayFields = [...fields, ...detailFields];
+  const names = planId ? await nameMaps(ctx, planId, undefined, fields, tasks) : { buckets: new Map<string, string>(), assignees: new Map<string, string>() };
   const labels = displayFields.map((field) => field.toUpperCase());
-  const rows = tasks.map((task) => displayFields.map((field) => formatField(task, field, bucketNames, assigneeNames)));
+  const rows = tasks.map((task) => displayFields.map((field) => formatField(task, field, names.buckets, names.assignees)));
   process.stdout.write(table(labels, rows));
   printContinuation(nextLink);
+}
+
+// Filters run client-side, so keep paging until a full page of matches (or the end) instead of filtering one page.
+async function collectTasks(ctx: Context, startUrl: string, keep: (task: Task) => boolean, all: boolean, filtered: boolean): Promise<{ pages: Collection<Task>[]; tasks: Task[]; nextLink: string | undefined }> {
+  const pages: Collection<Task>[] = [];
+  const tasks: Task[] = [];
+  let nextLink: string | undefined;
+  let url = startUrl;
+  for (let page = 0; page < (all || filtered ? PAGE_CAP : 1); page += 1) {
+    const result = await graphPage(ctx, url) as Collection<Task>;
+    pages.push(result);
+    tasks.push(...(result.value ?? []).filter(keep));
+    nextLink = result['@odata.nextLink'];
+    if (!nextLink || (!all && tasks.length >= DEFAULT_PAGE_SIZE)) break;
+    if (!all && !filtered) break;
+    validateContinuation(nextLink, ctx);
+    url = nextLink;
+  }
+  return { pages, tasks, nextLink };
+}
+
+// Bucket and Assignee names are looked up only for columns that are shown and Tasks that have them.
+async function nameMaps(ctx: Context, planId: string, knownPlan: PlanRef | undefined, fields: string[], tasks: Task[]): Promise<{ buckets: Map<string, string>; assignees: Map<string, string> }> {
+  const buckets = new Map<string, string>();
+  const assignees = new Map<string, string>();
+  if (fields.includes('bucket') && tasks.some((task) => task.bucketId)) {
+    for (const bucket of await collection<Bucket>(ctx, `/planner/plans/${encodeURIComponent(planId)}/buckets`)) if (bucket.id) buckets.set(bucket.id, bucket.name ?? bucket.id);
+  }
+  if (fields.includes('assignees') && tasks.some((task) => Object.keys(task.assignments ?? {}).length)) {
+    const plan = knownPlan ?? await graphRequest(ctx, 'GET', `/planner/plans/${encodeURIComponent(planId)}`) as Plan;
+    for (const member of await planMembers(ctx, plan)) if (member.id) assignees.set(member.id, member.displayName ?? member.mail ?? member.userPrincipalName ?? member.id);
+  }
+  return { buckets, assignees };
 }
 
 async function showTask(ctx: Context, args: string[]): Promise<void> {

@@ -27,7 +27,7 @@ Commands and options:
   config show | set plan|bucket <name|id>
   me | plans [--json] [--all] [--cursor <token>]
   buckets | members [--plan <name|id>] [--json] [--all] [--cursor <token>]
-  tasks [--plan <name|id>] [--bucket <name|id>] [--mine] [--open]
+  tasks [--plan <name|id>|--all-plans] [--bucket <name|id>] [--mine] [--open] [--search <text>]
         [--created-after <date>] [--completed-after <date>]
         [--fields <id,title,bucket,percent,due,assignees,created,completed,priority,start>] [--details]
         [--json] [--all] [--cursor <token>]

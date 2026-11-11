@@ -39,10 +39,11 @@ planner tasks
 planner tasks --mine --open
 planner tasks --bucket "In progress" --fields id,title,due,assignees
 planner tasks --created-after 2026-01-01 --all
+planner tasks --all-plans --search "badge"
 planner task <task-id-or-url>
 ```
 
-`tasks` shows compact output without Task Details by default. Use `--details` to include description and checklist. Lists are paged; continue with the printed `--cursor` value or use `--all` up to the safety cap. `--json` prints the raw Graph response. Plan, Bucket, and Assignee names are supported; ambiguous and unknown names fail with exit code 2.
+`tasks` shows compact output without Task Details by default. Use `--details` to include description and checklist. Lists are paged; continue with the printed `--cursor` value or use `--all` up to the safety cap. `--search <text>` keeps Tasks whose title contains the text (case-insensitive), and also the description when `--details` is set. `--all-plans` lists Tasks from every Plan with a PLAN column and cannot be combined with `--plan`, `--bucket`, or `--cursor`; use it when a Task is not in the Default Plan. `--json` prints the raw Graph response. Plan, Bucket, and Assignee names are supported; ambiguous and unknown names fail with exit code 2.
 
 ## Write commands (explicit instruction only)
 
