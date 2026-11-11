@@ -107,7 +107,8 @@ async function listTasks(ctx: Context, args: string[]): Promise<void> {
       const byPlan = new Map<string, Task[]>();
       for (const task of result.tasks) {
         const id = typeof task.planId === 'string' ? task.planId : '';
-        byPlan.set(id, [...(byPlan.get(id) ?? []), task]);
+        const group = byPlan.get(id);
+        if (group) group.push(task); else byPlan.set(id, [task]);
       }
       for (const [id, tasks] of byPlan) groups.push({ plan: plans.find((plan) => plan.id === id) ?? { id }, tasks });
     } else {
