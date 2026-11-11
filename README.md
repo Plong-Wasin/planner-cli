@@ -50,7 +50,7 @@ Run `planner --help` for the same command and option reference.
 | `planner plans` | List reachable Plans. |
 | `planner buckets [--plan <name\|id>]` | List Buckets in the selected Plan. |
 | `planner members [--plan <name\|id>]` | List members of the selected Plan's owning group. |
-| `planner tasks` | List compact Task rows. `--all-plans --mine` lists every Task assigned to you across Plans in one request. Supports `--plan`, `--all-plans`, `--search`, `--bucket`, `--mine`, `--open`, `--created-after`, `--completed-after`, `--fields`, `--details`, `--cursor`, `--all`, and `--json`. |
+| `planner tasks` | List compact Task rows. `--all-plans --mine` lists every Task assigned to you across Plans in one paged request. Supports `--plan`, `--all-plans`, `--search`, `--bucket`, `--mine`, `--open`, `--created-after`, `--completed-after`, `--fields`, `--details`, `--cursor`, `--all`, and `--json`. |
 | `planner task <id\|url>` | Show one Task with Details. |
 | `planner add <title>` | Create a Task in the Default Bucket, assigned to you at `important` Priority by default. Supports `--bucket`, `--assign`, `--no-assign`, `--priority`, `--due`, `--start`, `--description`, `--checklist`, and `--data` for bulk create. |
 | `planner add --data <@file\|->` | Bulk create Tasks from NDJSON or a JSON array. Input fields are `title`, `bucket`, `assign`, `priority`, `due`, `start`, `description`, and `checklist`. |
