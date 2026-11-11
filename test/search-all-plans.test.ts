@@ -173,3 +173,33 @@ it('--all-plans cannot be combined with --plan, --bucket or --cursor', async () 
     assert.match(result.stderr, /--all-plans/);
   }
 });
+
+it('--all-plans --mine reads the Tasks assigned to the user in one paged request instead of one per Plan', async () => {
+  servers.graph.reset();
+  servers.graph.setReply((request, response) => {
+    const send = (body: unknown) => { response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(body)); };
+    if (request.path === '/me') send({ id: 'user-1' });
+    else if (request.path === '/me/planner/plans') send({ value: [{ id: PLAN_A, title: 'Dev', owner: 'group-a' }, { id: PLAN_B, title: 'Omni Channel', owner: 'group-b' }] });
+    else if (request.path.startsWith('/me/planner/tasks') && !request.path.includes('page=2')) {
+      send({ '@odata.nextLink': `${servers.graph.url}/me/planner/tasks?page=2`, value: [
+        { id: 'mine-b', title: 'In Omni', planId: PLAN_B, percentComplete: 0, assignments: { 'user-1': {} } },
+        { id: 'not-mine', title: 'Someone else', planId: PLAN_B, percentComplete: 0, assignments: { 'user-2': {} } },
+      ] });
+    } else if (request.path.startsWith('/me/planner/tasks')) {
+      send({ value: [
+        { id: 'mine-a', title: 'In Dev', planId: PLAN_A, percentComplete: 0, assignments: { 'user-1': {} } },
+        { id: 'done-a', title: 'Finished', planId: PLAN_A, percentComplete: 100, assignments: { 'user-1': {} } },
+      ] });
+    } else if (request.path === '/groups/group-a/members' || request.path === '/groups/group-b/members') send({ value: [{ id: 'user-1', displayName: 'Ada Planner' }] });
+    else send({ value: [] });
+  });
+
+  const result = await cli.run(['tasks', '--all-plans', '--mine', '--open']);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /Omni Channel\s+mine-b\s+In Omni\s+0%\s+Ada Planner/);
+  assert.match(result.stdout, /Dev\s+mine-a\s+In Dev/);
+  assert.doesNotMatch(result.stdout, /not-mine|done-a/);
+  assert.ok(servers.graph.requests.every(({ path }) => !path.startsWith('/planner/plans/') || path.endsWith('/buckets')), 'no per-Plan Tasks request');
+  assert.equal(servers.graph.requests.filter(({ path }) => path.startsWith('/me/planner/tasks')).length, 2);
+});
