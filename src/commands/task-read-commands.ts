@@ -53,6 +53,8 @@ async function listTasks(ctx: Context, args: string[]): Promise<void> {
   const bucketInput = option(args, '--bucket');
   const bucketId = bucketInput ? (isGuid(bucketInput) ? bucketInput : planId ? await resolveBucketId(ctx, planId, bucketInput) : usage("A Default Plan is required to resolve a Bucket name; pass --plan <name|id>.")) : undefined;
   const search = option(args, '--search')?.toLocaleLowerCase();
+  const cursor = option(args, '--cursor');
+  const cursorUrl = cursor ? decodeCursor(cursor, ctx) : undefined;
   const fieldsArg = option(args, '--fields');
   const fields = fieldsArg ? fieldsArg.split(',').map((field) => field.trim()).filter(Boolean) : DEFAULT_FIELDS;
   if (!fields.length || fields.some((field) => !Object.hasOwn(FIELD_MAP, field))) {
@@ -103,17 +105,19 @@ async function listTasks(ctx: Context, args: string[]): Promise<void> {
       if (!plan.id) continue;
       // A Plan can be listed yet unreadable (its group was deleted, access was removed); skip it instead of losing every other Plan.
       const result = await collectTasks(ctx, `/planner/plans/${encodeURIComponent(plan.id)}/tasks?${query}`, keep, all, filtered).catch((error: unknown) => {
-        if (error instanceof CliError && (error.status === 403 || error.status === 404)) {
-          process.stderr.write(`skipped plan '${plan.title ?? plan.id}': ${error.message}\n`);
-          return undefined;
-        }
-        throw error;
+        if (!isUnreadable(error)) throw error;
+        process.stderr.write(`skipped plan '${plan.title ?? plan.id}': ${(error as CliError).message}\n`);
+        return undefined;
       });
       if (!result) continue;
-      if (result.nextLink) process.stderr.write(`plan '${plan.title ?? plan.id}' has more Tasks than the safety cap; narrow the search.\n`);
+      if (result.nextLink) process.stderr.write(`plan '${plan.title ?? plan.id}' has more Tasks than the safety cap; narrow it with --search or other filters.\n`);
       if (!result.tasks.length) continue;
       found.push(...result.tasks);
-      const names = await nameMaps(ctx, plan.id, plan, fields, result.tasks);
+      const names = await nameMaps(ctx, plan.id, plan, fields, result.tasks).catch((error: unknown) => {
+        if (!isUnreadable(error)) throw error;
+        process.stderr.write(`could not resolve Bucket or Assignee names for plan '${plan.title ?? plan.id}': ${(error as CliError).message}\n`);
+        return { buckets: new Map<string, string>(), assignees: new Map<string, string>() };
+      });
       for (const task of result.tasks) rows.push([plan.title ?? plan.id, ...displayFields.map((field) => formatField(task, field, names.buckets, names.assignees))]);
     }
     if (args.includes('--json')) {
@@ -125,8 +129,7 @@ async function listTasks(ctx: Context, args: string[]): Promise<void> {
   }
 
   const basePath = planId ? `/planner/plans/${encodeURIComponent(planId)}/tasks` : '/me/planner/tasks';
-  const cursor = option(args, '--cursor');
-  const start = cursor ? decodeCursor(cursor, ctx) : `${basePath}?${query}`;
+  const start = cursorUrl ?? `${basePath}?${query}`;
   const { pages, tasks, nextLink } = await collectTasks(ctx, start, keep, all, filtered);
 
   const first = pages[0] ?? { value: [] };
@@ -143,6 +146,10 @@ async function listTasks(ctx: Context, args: string[]): Promise<void> {
   const rows = tasks.map((task) => displayFields.map((field) => formatField(task, field, names.buckets, names.assignees)));
   process.stdout.write(table(labels, rows));
   printContinuation(nextLink);
+}
+
+function isUnreadable(error: unknown): boolean {
+  return error instanceof CliError && (error.status === 403 || error.status === 404);
 }
 
 // Filters run client-side, so keep paging until a full page of matches (or the end) instead of filtering one page.
@@ -255,6 +262,12 @@ function after(value: string | undefined, target: number): boolean {
 }
 
 function option(args: string[], name: string): string | undefined {
+  const inline = args.find((arg) => arg.startsWith(`${name}=`));
+  if (inline !== undefined) {
+    const value = inline.slice(name.length + 1);
+    if (!value) usage(`Option '${name}' requires a value.`);
+    return value;
+  }
   const index = args.indexOf(name);
   if (index < 0) return undefined;
   const value = args[index + 1];

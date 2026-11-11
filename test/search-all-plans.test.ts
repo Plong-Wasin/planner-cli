@@ -133,6 +133,39 @@ it('--all-plans still fails on an error that is not a missing or forbidden Plan'
   assert.doesNotMatch(result.stderr, /skipped plan/);
 });
 
+it('--all-plans keeps a Plan whose Assignee names cannot be read and shows raw ids', async () => {
+  servers.graph.setReply((request, response) => {
+    const send = (status: number, body: unknown) => { response.writeHead(status, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(body)); };
+    if (request.path === '/me/planner/plans') send(200, { value: [{ id: PLAN_B, title: 'Omni Channel', owner: 'group-b' }] });
+    else if (request.path.startsWith(`/planner/plans/${PLAN_B}/tasks`)) send(200, { value: [{ id: 'task-b1', title: 'Kept', planId: PLAN_B, percentComplete: 0, assignments: { 'user-1': {} } }] });
+    else if (request.path === '/groups/group-b/members') send(403, { error: { message: 'forbidden' } });
+    else send(200, { value: [] });
+  });
+
+  const result = await cli.run(['tasks', '--all-plans']);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /Omni Channel\s+task-b1\s+Kept\s+0%\s+user-1/);
+  assert.match(result.stderr, /could not resolve Bucket or Assignee names for plan 'Omni Channel'/);
+});
+
+it('accepts --search=<text> as well as --search <text>', async () => {
+  servers.graph.setReply((request, response) => {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    if (request.path.startsWith(`/planner/plans/${PLAN_A}/tasks`)) {
+      response.end(JSON.stringify({ value: [{ id: 'task-a1', title: 'Fix login', planId: PLAN_A }, { id: 'task-a2', title: 'Other', planId: PLAN_A }] }));
+    } else response.end(JSON.stringify({ value: [] }));
+  });
+
+  const result = await cli.run(['tasks', '--search=login']);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /task-a1/);
+  assert.doesNotMatch(result.stdout, /task-a2/);
+  const combined = await cli.run(['tasks', '--all-plans', '--bucket=Todo']);
+  assert.equal(combined.code, 2);
+});
+
 it('--all-plans cannot be combined with --plan, --bucket or --cursor', async () => {
   for (const extra of [['--plan', 'Dev'], ['--bucket', 'Todo'], ['--cursor', 'abc']]) {
     const result = await cli.run(['tasks', '--all-plans', ...extra]);
