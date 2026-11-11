@@ -45,7 +45,8 @@ Commands and options:
   api <GET|POST|PUT|PATCH|DELETE> <path> [key=value...] [--data <JSON|@file|->] [--header 'Name: value'] [--all]
 
 Common options:
-  --json           Print the raw Graph response (read commands only)
+  --json           Print the Graph response (read commands only). "tasks" returns only the
+                   shown columns; add priority,start with --fields. "task <id>" returns all.
   --all            Follow pages up to the safety cap
   --cursor <token> Continue from a previous page
   -h, --help     Show help
