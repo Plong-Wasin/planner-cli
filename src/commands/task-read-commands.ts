@@ -1,5 +1,5 @@
 import { graphRequest, type Context } from './auth-commands.js';
-import { usage } from '../utils/errors.js';
+import { CliError, usage } from '../utils/errors.js';
 import { collection, isGuid, planMembers, resolveBucketId, resolvePlanId } from '../utils/name-resolution.js';
 
 interface Task {
@@ -101,7 +101,15 @@ async function listTasks(ctx: Context, args: string[]): Promise<void> {
     const rows: string[][] = [];
     for (const plan of plans) {
       if (!plan.id) continue;
-      const result = await collectTasks(ctx, `/planner/plans/${encodeURIComponent(plan.id)}/tasks?${query}`, keep, all, filtered);
+      // A Plan can be listed yet unreadable (its group was deleted, access was removed); skip it instead of losing every other Plan.
+      const result = await collectTasks(ctx, `/planner/plans/${encodeURIComponent(plan.id)}/tasks?${query}`, keep, all, filtered).catch((error: unknown) => {
+        if (error instanceof CliError && (error.status === 403 || error.status === 404)) {
+          process.stderr.write(`skipped plan '${plan.title ?? plan.id}': ${error.message}\n`);
+          return undefined;
+        }
+        throw error;
+      });
+      if (!result) continue;
       if (result.nextLink) process.stderr.write(`plan '${plan.title ?? plan.id}' has more Tasks than the safety cap; narrow the search.\n`);
       if (!result.tasks.length) continue;
       found.push(...result.tasks);

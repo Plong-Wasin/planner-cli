@@ -89,6 +89,50 @@ it('--all-plans --json prints one merged list that carries planId', async () => 
   assert.deepEqual(parsed.value.map((task) => `${task.planId}:${task.id}`).sort(), [`${PLAN_A}:task-a1`, `${PLAN_B}:task-b1`, `${PLAN_B}:task-b2`].sort());
 });
 
+it('--all-plans skips a Plan that answers 403 or 404 and still lists the rest', async () => {
+  for (const status of [403, 404]) {
+    servers.graph.reset();
+    servers.graph.setReply((request, response) => {
+      if (request.path.startsWith(`/planner/plans/${PLAN_A}/tasks`)) {
+        response.writeHead(status, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ error: { message: 'gone' } }));
+      } else if (request.path === '/me/planner/plans') {
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ value: [{ id: PLAN_A, title: 'Dev', owner: 'group-a' }, { id: PLAN_B, title: 'Omni Channel', owner: 'group-b' }] }));
+      } else if (request.path.startsWith(`/planner/plans/${PLAN_B}/tasks`)) {
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ value: [{ id: 'task-b1', title: 'Still listed', planId: PLAN_B, percentComplete: 0, assignments: {} }] }));
+      } else {
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ value: [] }));
+      }
+    });
+
+    const result = await cli.run(['tasks', '--all-plans']);
+
+    assert.equal(result.code, 0, `${status}: ${result.stderr}`);
+    assert.match(result.stdout, /Omni Channel\s+task-b1\s+Still listed/);
+    assert.match(result.stderr, /skipped plan 'Dev'/);
+  }
+});
+
+it('--all-plans still fails on an error that is not a missing or forbidden Plan', async () => {
+  servers.graph.setReply((request, response) => {
+    if (request.path === '/me/planner/plans') {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ value: [{ id: PLAN_A, title: 'Dev', owner: 'group-a' }] }));
+    } else {
+      response.writeHead(500, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ error: { message: 'boom' } }));
+    }
+  });
+
+  const result = await cli.run(['tasks', '--all-plans']);
+
+  assert.equal(result.code, 1);
+  assert.doesNotMatch(result.stderr, /skipped plan/);
+});
+
 it('--all-plans cannot be combined with --plan, --bucket or --cursor', async () => {
   for (const extra of [['--plan', 'Dev'], ['--bucket', 'Todo'], ['--cursor', 'abc']]) {
     const result = await cli.run(['tasks', '--all-plans', ...extra]);
